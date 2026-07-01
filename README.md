@@ -300,10 +300,19 @@ mode authentifié = remettre `AUTH_ENABLED=true` + un token, puis rebuild.
 *Évolution future : une vraie couche OAuth 2.1 (auth providers FastMCP) pourra
 remplacer ce flag sans réécrire le cœur — voir [Comment étendre](#comment-étendre-ajouter-un-domaine).*
 
-**2. Firewall restreint aux IP Anthropic** — un connecteur custom est appelé
-**depuis le cloud Anthropic**, pas depuis votre navigateur. Restreignez donc le
-443 aux plages IP publiées par Anthropic (doc « Anthropic IP addresses »), en
-**plus** du Bearer :
+**2. Allowlist IP — UNIQUEMENT en accès « connecteur cloud »** — un connecteur
+custom claude.ai est appelé **depuis le cloud Anthropic**. Dans ce mode on peut
+restreindre le 443 aux plages IP publiées par Anthropic, en **plus** du Bearer.
+
+> **Accès Claude Desktop (client local sur votre PC) :** l'allowlist IP Anthropic
+> n'a plus de sens et **bloquerait votre poste** — on la retire et la défense
+> repose sur **Bearer token + TLS + URL non devinable**. Concrètement (déploiement
+> co-hébergé derrière un nginx) l'allowlist est un `allow …; deny all;` dans le
+> *server block* du vhost MCP : on le commente/retire, `nginx -t` puis reload
+> gracieux, sans toucher au reste.
+
+Pour le mode connecteur cloud, la restriction se fait côté firewall/reverse-proxy
+(plages « Anthropic IP addresses ») :
 
 ```bash
 ufw default deny incoming
