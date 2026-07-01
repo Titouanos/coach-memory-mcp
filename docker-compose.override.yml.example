@@ -1,0 +1,41 @@
+# Co-hosted deployment overlay.
+#
+# Use this when coach-memory runs BEHIND AN EXISTING reverse proxy that lives on
+# its own Docker network — e.g. a containerized nginx that already owns :80/:443
+# for another app on the same host (the live mcp.feed-athlete.com deployment does
+# exactly this, behind the "feed-athlete" nginx).
+#
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   # adjust the external network name below to your proxy's network, then:
+#   docker compose up -d --build
+#
+# It attaches ONLY the `mcp` service to the proxy's external network (so the proxy
+# can reach it by the alias `coach-memory-mcp`). Postgres is deliberately NOT put
+# on that network — it stays on coach-memory's private `internal` network, so no
+# other app on the shared proxy network can reach the database.
+#
+# On the proxy, point a vhost at the app. Because the upstream is a container that
+# can be recreated (new IP), use a Docker-DNS resolver so nginx re-resolves it and
+# survives restarts/reboots instead of caching a stale IP (or failing to start):
+#
+#     location / {
+#         resolver 127.0.0.11 valid=30s ipv6=off;
+#         set $coach_upstream coach-memory-mcp;
+#         proxy_pass http://$coach_upstream:8000;
+#         proxy_http_version 1.1;
+#         proxy_set_header Connection "";
+#         proxy_buffering off;
+#         # ... Host / X-Forwarded-* headers, proxy_read_timeout 3600s ...
+#     }
+
+services:
+  mcp:
+    networks:
+      internal: {}
+      feed-athlete_web:          # <-- your reverse proxy's external network name
+        aliases:
+          - coach-memory-mcp
+
+networks:
+  feed-athlete_web:              # <-- must match the name used above
+    external: true

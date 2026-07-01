@@ -9,6 +9,9 @@ __pycache__/
 .pytest_cache/
 .venv/
 
+# Environment-specific compose overlay (commit the .example, not the real one)
+docker-compose.override.yml
+
 # Build artifacts
 *.egg-info/
 dist/

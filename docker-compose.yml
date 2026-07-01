@@ -3,7 +3,7 @@
 #   mcp      — the coach-memory MCP server (streamable-HTTP on :8000)
 #
 # The mcp port is published only on 127.0.0.1 — Nginx (on the host) terminates
-# TLS for coach-memory.rcmlearning.com and reverse-proxies to it. See README.
+# TLS for mcp.feed-athlete.com and reverse-proxies to it. See README.
 
 services:
   postgres:

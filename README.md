@@ -241,17 +241,17 @@ Modules candidats — cibles que l'architecture doit **absorber sans refonte**
 
 ## Déploiement : Nginx + TLS
 
-Vhost pour `coach-memory.rcmlearning.com` → `127.0.0.1:8000`. Points clés :
-HTTP/1.1, `proxy_buffering off` (le Streamable HTTP utilise du SSE), en-tête
-`Connection` vide.
+**Cas A — nginx hôte dédié (standalone).** Vhost pour `mcp.feed-athlete.com` →
+`127.0.0.1:8000`. Points clés : HTTP/1.1, `proxy_buffering off` (le Streamable
+HTTP utilise du SSE), en-tête `Connection` vide.
 
 ```nginx
 server {
     listen 443 ssl http2;
-    server_name coach-memory.rcmlearning.com;
+    server_name mcp.feed-athlete.com;
 
-    ssl_certificate     /etc/letsencrypt/live/coach-memory.rcmlearning.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/coach-memory.rcmlearning.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/mcp.feed-athlete.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mcp.feed-athlete.com/privkey.pem;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -270,8 +270,37 @@ server {
 }
 ```
 
-Certificat : `certbot --nginx -d coach-memory.rcmlearning.com`.
-L'URL du connecteur est `https://coach-memory.rcmlearning.com/mcp`.
+Certificat : `certbot --nginx -d mcp.feed-athlete.com`.
+L'URL du connecteur est `https://mcp.feed-athlete.com/mcp`.
+
+**Cas B — derrière un nginx CONTENEURISÉ existant (déploiement réel de
+`mcp.feed-athlete.com`).** Il n'y a pas de nginx hôte : le reverse-proxy est un
+conteneur qui possède déjà 80/443 pour une autre app. Alors :
+
+- On attache **uniquement** le service `mcp` au réseau Docker de ce proxy (voir
+  `docker-compose.override.yml.example` → copier en `docker-compose.override.yml`).
+  **Postgres reste sur le réseau privé `internal`**, jamais partagé.
+- Le proxy vise le conteneur par son alias, **avec un `resolver`** pour survivre
+  aux redémarrages/reboots (sinon nginx met en cache une IP périmée, voire refuse
+  de démarrer si l'upstream n'est pas résolvable au boot) :
+
+  ```nginx
+  location / {
+      resolver 127.0.0.11 valid=30s ipv6=off;   # DNS interne Docker
+      set $coach_upstream coach-memory-mcp;
+      proxy_pass http://$coach_upstream:8000;    # PAS 127.0.0.1 (loopback du conteneur)
+      proxy_http_version 1.1;
+      proxy_set_header Connection "";
+      proxy_buffering off;
+      proxy_read_timeout 3600s;
+      # + Host / X-Forwarded-*
+  }
+  # /.well-known/acme-challenge/ → root /var/www/certbot;  (hors de tout allow/deny)
+  ```
+- Cert via **`certbot certonly --webroot -w /var/www/certbot -d mcp.feed-athlete.com`**
+  (pas `--nginx`), le certbot hôte écrivant dans `/etc/letsencrypt` monté (ro) dans
+  le conteneur. Le hook de renouvellement doit **reloader le conteneur** :
+  `docker compose exec nginx nginx -s reload`.
 
 ---
 
@@ -339,7 +368,7 @@ le bind sur `127.0.0.1` uniquement, Nginx est le seul point d'entrée.
 
 1. **Customize** (ou Settings) → **Connectors**
 2. **+** → **Add custom connector**
-3. URL : `https://coach-memory.rcmlearning.com/mcp`
+3. URL : `https://mcp.feed-athlete.com/mcp`
 4. Authentification : **Bearer token** → collez la valeur de `MCP_AUTH_TOKEN`
 5. Validez : les tools (`get_athlete_context`, `log_session`, …) apparaissent.
 

@@ -10,7 +10,7 @@
 #
 set -euo pipefail
 
-DOMAIN="coach-memory.rcmlearning.com"
+DOMAIN="mcp.feed-athlete.com"
 
 # -----------------------------------------------------------------------------
 # Anthropic IP ranges allowed to reach 443 (custom connectors call FROM the
