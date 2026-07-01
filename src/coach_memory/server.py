@@ -98,7 +98,18 @@ def create_asgi_app(settings: Settings | None = None):
     """
     settings = settings or get_settings()
     mcp, _pool = build_server(settings)
-    middleware = [Middleware(BearerAuthMiddleware, token=settings.mcp_auth_token)]
+    middleware = []
+    if settings.auth_enabled:
+        middleware.append(Middleware(BearerAuthMiddleware, token=settings.mcp_auth_token))
+        logger.info("bearer auth enabled")
+    else:
+        # No auth middleware and no FastMCP auth provider → no 401 challenge and
+        # no OAuth metadata is ever advertised. Defence is the upstream nginx IP
+        # allowlist + TLS + unguessable URL.
+        logger.warning(
+            "AUTH DISABLED (network-only mode) — /mcp is unauthenticated; "
+            "relying on upstream IP allowlist + TLS"
+        )
     return mcp.http_app(
         path=settings.mcp_path,
         transport="streamable-http",

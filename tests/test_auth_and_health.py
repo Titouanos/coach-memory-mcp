@@ -40,6 +40,31 @@ async def test_healthz_unauthenticated_ok(settings):
     assert body["db"] is True
 
 
+async def test_auth_disabled_allows_unauthenticated_initialize(settings):
+    # Network-only mode: no bearer needed; must NOT 401 and must NOT advertise
+    # any auth challenge (which would make claude.ai attempt an OAuth flow).
+    s = settings.model_copy(update={"auth_enabled": False})
+    app = create_asgi_app(s)
+    init = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "t", "version": "0"},
+        },
+    }
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
+            resp = await ac.post(
+                "/mcp", json=init, headers={"Accept": "application/json, text/event-stream"}
+            )
+    assert resp.status_code == 200
+    assert "www-authenticate" not in resp.headers
+
+
 async def test_healthz_trailing_slash_is_exempt(settings):
     # A health check probing "/healthz/" must not be rejected by auth (it may be
     # 307-redirected by routing, but never 401).

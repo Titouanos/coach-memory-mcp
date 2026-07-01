@@ -279,9 +279,26 @@ L'URL du connecteur est `https://coach-memory.rcmlearning.com/mcp`.
 
 Deux couches, cumulatives :
 
-**1. Bearer token** (`MCP_AUTH_TOKEN`) — vérifié en constant-time sur **chaque**
-requête `/mcp` par le middleware ASGI. `/healthz` en est exempté. Générez-le
-avec `openssl rand -hex 32` et ne le committez jamais.
+**1. Authentification applicative — pilotée par `AUTH_ENABLED`** :
+
+- **`AUTH_ENABLED=true` (défaut) — mode Bearer.** Le token `MCP_AUTH_TOKEN` est
+  vérifié en constant-time sur **chaque** requête `/mcp` par le middleware ASGI.
+  `/healthz` en est exempté. Générez le token avec `openssl rand -hex 32`, ne le
+  committez jamais. Dans claude.ai, renseignez le Bearer token du connecteur.
+- **`AUTH_ENABLED=false` — mode « réseau-seul ».** Le middleware n'est pas
+  installé : `/mcp` passe sans vérification de token. La défense repose alors
+  entièrement sur l'allowlist IP du reverse-proxy + TLS + une URL non devinable
+  (point 2 ci-dessous). Dans claude.ai, ajoutez le connecteur **sans** Bearer.
+  Utile quand l'allowlist IP suffit et qu'on veut éviter tout échange de secret.
+
+Dans les deux modes, **aucun flow OAuth n'est annoncé** : le serveur ne configure
+aucun *auth provider* FastMCP, donc pas d'endpoint `/.well-known/oauth-*` ni de
+`401 WWW-Authenticate` qui déclencherait une négociation OAuth côté claude.ai.
+Le code du middleware Bearer reste en place (simplement non câblé) : repasser en
+mode authentifié = remettre `AUTH_ENABLED=true` + un token, puis rebuild.
+
+*Évolution future : une vraie couche OAuth 2.1 (auth providers FastMCP) pourra
+remplacer ce flag sans réécrire le cœur — voir [Comment étendre](#comment-étendre-ajouter-un-domaine).*
 
 **2. Firewall restreint aux IP Anthropic** — un connecteur custom est appelé
 **depuis le cloud Anthropic**, pas depuis votre navigateur. Restreignez donc le

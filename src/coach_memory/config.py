@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,10 +26,19 @@ class Settings(BaseSettings):
         ...,
         description="psycopg-style DSN, e.g. postgresql://user:pass@postgres:5432/coach_memory",
     )
-    mcp_auth_token: str = Field(
-        ...,
+
+    # --- auth ---------------------------------------------------------------
+    # AUTH_ENABLED=true (default): every /mcp request must carry a valid bearer
+    # token (checked by the ASGI middleware). AUTH_ENABLED=false ("network-only"
+    # mode): the middleware is NOT installed and requests pass through
+    # unauthenticated — defence then relies entirely on the upstream nginx IP
+    # allowlist + TLS + an unguessable URL. No OAuth flow is ever advertised in
+    # either mode (no FastMCP auth provider is configured).
+    auth_enabled: bool = True
+    mcp_auth_token: str | None = Field(
+        default=None,
         min_length=16,
-        description="Static bearer token required on every /mcp request.",
+        description="Static bearer token; required only when AUTH_ENABLED is true.",
     )
 
     # --- server -------------------------------------------------------------
@@ -50,6 +59,15 @@ class Settings(BaseSettings):
 
     # --- observability ------------------------------------------------------
     log_level: str = "INFO"
+
+    @model_validator(mode="after")
+    def _require_token_when_auth_enabled(self) -> "Settings":
+        if self.auth_enabled and not self.mcp_auth_token:
+            raise ValueError(
+                "MCP_AUTH_TOKEN is required when AUTH_ENABLED is true "
+                "(set AUTH_ENABLED=false for network-only mode)."
+            )
+        return self
 
 
 @lru_cache(maxsize=1)
