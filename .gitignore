@@ -1,0 +1,21 @@
+# Secrets — never commit real env files (keep the template)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Local Postgres data (only relevant if you switch the compose named volume
+# `pgdata` to a bind mount; the named volume lives under Docker, not the repo)
+pgdata/
+postgres-data/
+postgres_data/

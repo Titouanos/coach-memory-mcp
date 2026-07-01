@@ -1,0 +1,42 @@
+[project]
+name = "coach-memory"
+version = "0.1.0"
+description = "Persistent long-term coaching memory for an endurance athlete, exposed as a remote (streamable-HTTP) MCP server."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Titouan Chaignepain" }]
+dependencies = [
+    "fastmcp>=3.4,<4",
+    "psycopg[binary,pool]>=3.2,<4",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.4,<3",
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+coach-memory = "coach_memory.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/coach_memory"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.uv]
+# dev dependencies are declared under [project.optional-dependencies].dev
+# install them with: uv sync --extra dev
