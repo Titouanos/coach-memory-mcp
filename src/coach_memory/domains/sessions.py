@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
 from ..models import Rpe
 from ..repositories import Repositories
@@ -31,16 +32,19 @@ def register(mcp: FastMCP, repos: Repositories) -> None:
         rpe: rate of perceived exertion, 1-10. felt: subjective note.
         garmin_activity_id: optional link to the raw activity in the Garmin MCP.
         """
-        session = await repos.sessions.create(
-            date=date or dt.date.today(),
-            sport=sport,
-            type=type,
-            planned=planned,
-            executed=executed,
-            rpe=rpe,
-            felt=felt,
-            garmin_activity_id=garmin_activity_id,
-        )
+        try:
+            session = await repos.sessions.create(
+                date=date or dt.date.today(),
+                sport=sport,
+                type=type,
+                planned=planned,
+                executed=executed,
+                rpe=rpe,
+                felt=felt,
+                garmin_activity_id=garmin_activity_id,
+            )
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
         return session.model_dump(mode="json")
 
     @mcp.tool

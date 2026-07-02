@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import datetime as dt
 
+from psycopg.errors import UniqueViolation
+
 from ..models import Session
 from .base import BaseRepository
 
@@ -25,19 +27,34 @@ class SessionRepository(BaseRepository):
         felt: str | None = None,
         garmin_activity_id: str | None = None,
     ) -> Session:
-        async with self.pool.connection() as conn:
-            cur = await conn.execute(
-                f"""
-                INSERT INTO coach.sessions
-                    (date, sport, type, planned, executed, rpe, felt, garmin_activity_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING {_COLS}
-                """,
-                (date, sport, type, planned, executed, rpe, felt, garmin_activity_id),
-            )
-            row = await cur.fetchone()
+        try:
+            async with self.pool.connection() as conn:
+                cur = await conn.execute(
+                    f"""
+                    INSERT INTO coach.sessions
+                        (date, sport, type, planned, executed, rpe, felt, garmin_activity_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING {_COLS}
+                    """,
+                    (date, sport, type, planned, executed, rpe, felt, garmin_activity_id),
+                )
+                row = await cur.fetchone()
+        except UniqueViolation as exc:
+            raise ValueError(
+                f"a session for garmin_activity_id {garmin_activity_id!r} already "
+                "exists (sessions are unique per Garmin activity)"
+            ) from exc
         assert row is not None
         return Session(**row)
+
+    async def find_by_garmin_id(self, garmin_activity_id: str) -> Session | None:
+        async with self.pool.connection() as conn:
+            cur = await conn.execute(
+                f"SELECT {_COLS} FROM coach.sessions WHERE garmin_activity_id = %s",
+                (garmin_activity_id,),
+            )
+            row = await cur.fetchone()
+        return Session(**row) if row else None
 
     async def recent(self, limit: int = 10) -> list[Session]:
         async with self.pool.connection() as conn:

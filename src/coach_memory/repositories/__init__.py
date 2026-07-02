@@ -17,6 +17,8 @@ from ..models import SearchHit
 from .analyses import AnalysisRepository
 from .decisions import DecisionRepository
 from .goals import GoalRepository
+from .metrics import DailyMetricsRepository
+from .plan import TrainingPlanRepository
 from .profile import ProfileRepository
 from .races import RaceRepository
 from .sessions import SessionRepository
@@ -57,6 +59,8 @@ class Repositories:
         self.races = RaceRepository(pool)
         self.decisions = DecisionRepository(pool)
         self.analyses = AnalysisRepository(pool)
+        self.metrics = DailyMetricsRepository(pool)
+        self.plan = TrainingPlanRepository(pool)
 
     async def search_memory(self, query: str, limit: int = 20) -> list[SearchHit]:
         async with self.pool.connection() as conn:

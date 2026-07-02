@@ -26,11 +26,13 @@ _DB = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
 # Truncate order is irrelevant with CASCADE; athlete_profile is a singleton.
 _TABLES = (
+    "coach.training_plan",
     "coach.sessions",
     "coach.goals",
     "coach.races",
     "coach.coaching_decisions",
     "coach.analyses",
+    "coach.daily_metrics",
     "coach.athlete_profile",
 )
 

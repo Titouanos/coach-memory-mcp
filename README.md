@@ -143,7 +143,14 @@ le lifespan → ouvre le pool et applique les migrations).
 | races       | `add_race(..., goal_id?)`, `link_race_to_goal(race_id, goal_id)`, `record_race_result(race_id, actual_time, notes?)`, `get_upcoming_races()` | Calendrier de courses, rattachables à un goal. |
 | decisions   | `log_coaching_decision(decision, rationale?, context_snapshot?, supersedes_id?)`, `get_active_decisions()` | Décisions de coaching + anti-staleness. |
 | analyses    | `record_analysis(topic, summary, key_metrics?)` | Analyses / revues. |
+| metrics     | `upsert_daily_metrics(date, fields)`, `get_daily_metrics(start_date?, end_date?)` | Métriques quotidiennes (HRV, sommeil, readiness, body battery, CTL/ATL/TSB) — 1 ligne/jour, upsert partiel, blob source conservé dans `raw`. |
+| plan        | `plan_workout(...)`, `plan_week(workouts)`, `get_week(date?)`, `mark_workout(id, status, session_id?)`, `update_workout(id, fields)` | Plan d'entraînement : séances planifiées (statut `planned/done/skipped/modified`, lien goal + séance réalisée), semaine jointe aux métriques du jour. `plan_week` est atomique. |
+| ingest      | `ingest_garmin_activity(activity, daily?)` | **Composite** : 1 appel = parse le JSON Garmin (tolérant aux variations) → crée la session (résumé structuré + `garmin_activity_id`) → upsert les métriques du jour si fournies → matche une séance planifiée du même sport à ±1 jour et la passe `done` (match retourné pour commenter prévu vs réalisé). |
 | search      | `search_memory(query, limit?)` | Recherche full-text Postgres sur séances / décisions / analyses. Pas de vector DB. |
+
+`get_athlete_context` inclut aussi la **semaine de plan en cours** (compacte, sans
+descriptions — le détail est dans `get_week`) et **7 jours de métriques** (date,
+hrv, sleep_score, readiness, tsb).
 
 ---
 
@@ -232,8 +239,10 @@ Modules candidats — cibles que l'architecture doit **absorber sans refonte**
 (non implémentés) :
 
 - **Nutrition / liaison Feed Athlete** — repas, hydratation, poids au fil de l'eau.
-- **Blocs de périodisation** — base/build/peak/taper, semaines de charge/décharge.
-- **Génération & versioning de plans d'entraînement** — plans datés, diff entre versions.
+- **Blocs de périodisation** — base/build/peak/taper, semaines de charge/décharge
+  (le `block_label` de `training_plan` en est le germe).
+- **Versioning de plans d'entraînement** — diff entre versions de plan (la
+  planification simple existe depuis 0004 ; le versioning reste à faire).
 - **Revue hebdomadaire automatisée** — agrège séances + métriques → `analyses`.
 - **Gestion des blessures / charge** — niveaux de douleur, restrictions, retour au sport.
 

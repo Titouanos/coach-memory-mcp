@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 GoalType = Literal["race", "perf", "habit"]
 GoalStatus = Literal["active", "hit", "missed", "abandoned"]
 GoalHorizon = Literal["long_term", "season", "block"]
+PlanStatus = Literal["planned", "done", "skipped", "modified"]
 RacePriority = Literal["A", "B", "C"]
 Rpe = Annotated[int, Field(ge=1, le=10, description="Rate of perceived exertion, 1-10")]
 
@@ -109,6 +110,42 @@ class Analysis(BaseModel):
     created_at: dt.datetime
 
 
+class DailyMetrics(BaseModel):
+    model_config = _STRICT
+    date: dt.date
+    hrv_ms: Optional[int] = None
+    hrv_status: Optional[str] = None
+    sleep_score: Optional[int] = None
+    sleep_duration_min: Optional[int] = None
+    resting_hr: Optional[int] = None
+    body_battery_start: Optional[int] = None
+    body_battery_end: Optional[int] = None
+    training_readiness: Optional[int] = None
+    ctl: Optional[float] = None
+    atl: Optional[float] = None
+    tsb: Optional[float] = None
+    vo2max_run: Optional[float] = None
+    vo2max_bike: Optional[float] = None
+    raw: Optional[dict] = None
+    created_at: Optional[dt.datetime] = None
+
+
+class PlannedWorkout(BaseModel):
+    model_config = _STRICT
+    id: int
+    date: dt.date
+    sport: str
+    type: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    target_load: Optional[int] = None
+    status: PlanStatus
+    session_id: Optional[int] = None
+    block_label: Optional[str] = None
+    goal_id: Optional[int] = None
+    created_at: dt.datetime
+
+
 class SearchHit(BaseModel):
     model_config = _STRICT
     source: Literal["session", "decision", "analysis"]
@@ -119,6 +156,55 @@ class SearchHit(BaseModel):
 
 
 # --- input models ------------------------------------------------------------
+class DailyMetricsUpdate(BaseModel):
+    """Partial daily-metrics upsert. Only fields explicitly set (and non-null)
+    are written; a null never erases a stored value."""
+
+    model_config = ConfigDict(extra="forbid")
+    hrv_ms: Optional[int] = Field(default=None, ge=0)
+    hrv_status: Optional[str] = None
+    sleep_score: Optional[int] = Field(default=None, ge=0, le=100)
+    sleep_duration_min: Optional[int] = Field(default=None, ge=0)
+    resting_hr: Optional[int] = Field(default=None, gt=0)
+    body_battery_start: Optional[int] = Field(default=None, ge=0, le=100)
+    body_battery_end: Optional[int] = Field(default=None, ge=0, le=100)
+    training_readiness: Optional[int] = Field(default=None, ge=0, le=100)
+    ctl: Optional[float] = None
+    atl: Optional[float] = None
+    tsb: Optional[float] = None
+    vo2max_run: Optional[float] = Field(default=None, gt=0)
+    vo2max_bike: Optional[float] = Field(default=None, gt=0)
+    raw: Optional[dict] = None
+
+
+class PlannedWorkoutCreate(BaseModel):
+    """One workout of a plan (used by plan_workout and each plan_week item)."""
+
+    model_config = ConfigDict(extra="forbid")
+    date: dt.date
+    sport: str
+    title: str
+    type: Optional[str] = None
+    description: Optional[str] = None
+    target_load: Optional[int] = Field(default=None, ge=0)
+    block_label: Optional[str] = None
+    goal_id: Optional[int] = None
+
+
+class PlannedWorkoutUpdate(BaseModel):
+    """Partial workout edit. Status transitions go through mark_workout."""
+
+    model_config = ConfigDict(extra="forbid")
+    date: Optional[dt.date] = None
+    sport: Optional[str] = None
+    type: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    target_load: Optional[int] = Field(default=None, ge=0)
+    block_label: Optional[str] = None
+    goal_id: Optional[int] = None
+
+
 class GoalUpdate(BaseModel):
     """Partial goal edit. Only fields explicitly set (and non-null) are written.
 

@@ -17,6 +17,9 @@ from . import (
     context,
     decisions,
     goals,
+    ingest,
+    metrics,
+    plan,
     profile,
     races,
     search,
@@ -31,6 +34,9 @@ DOMAIN_MODULES: list[ModuleType] = [
     races,
     decisions,
     analyses,
+    metrics,
+    plan,
+    ingest,
     search,
 ]
 
