@@ -139,8 +139,8 @@ le lifespan → ouvre le pool et applique les migrations).
 | context     | `get_athlete_context()` | **Le tool central.** Un appel → digest compact : profil + objectifs actifs + prochaines courses A/B + 10 dernières séances + décisions actives + 3 dernières analyses. À appeler en début de conversation. |
 | profile     | `update_athlete_profile(fields)` | Upsert partiel du profil (singleton). |
 | sessions    | `log_session(...)`, `get_recent_sessions(limit?)` | Journal des séances (prévu/réalisé, RPE, ressenti). |
-| goals       | `set_goal(...)`, `update_goal_status(goal_id, status)`, `get_goals(status?)` | Objectifs race/perf/habit. |
-| races       | `add_race(...)`, `record_race_result(race_id, actual_time, notes?)`, `get_upcoming_races()` | Calendrier de courses. |
+| goals       | `set_goal(..., parent_id?, horizon?)`, `update_goal(goal_id, fields)`, `update_goal_status(goal_id, status)`, `get_goals(status?)` | Objectifs race/perf/habit, **hiérarchisés** (`parent_id`, horizon `long_term`/`season`/`block`, cycles rejetés). |
+| races       | `add_race(..., goal_id?)`, `link_race_to_goal(race_id, goal_id)`, `record_race_result(race_id, actual_time, notes?)`, `get_upcoming_races()` | Calendrier de courses, rattachables à un goal. |
 | decisions   | `log_coaching_decision(decision, rationale?, context_snapshot?, supersedes_id?)`, `get_active_decisions()` | Décisions de coaching + anti-staleness. |
 | analyses    | `record_analysis(topic, summary, key_metrics?)` | Analyses / revues. |
 | search      | `search_memory(query, limit?)` | Recherche full-text Postgres sur séances / décisions / analyses. Pas de vector DB. |

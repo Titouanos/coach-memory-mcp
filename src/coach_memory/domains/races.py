@@ -19,20 +19,38 @@ def register(mcp: FastMCP, repos: Repositories) -> None:
         distance: str | None = None,
         priority: RacePriority = "B",
         target_time: str | None = None,
+        goal_id: int | None = None,
     ) -> dict:
         """Add a race to the calendar.
 
         priority: 'A' (peak target), 'B' (important tune-up), or 'C' (training race).
         distance: free text, e.g. '10K', 'Half', 'Ironman 70.3'.
         target_time: free text, e.g. 'sub-37', '36:59'.
+        goal_id: id of the goal this race serves (e.g. the A-race realizing a
+            season goal).
         """
-        race = await repos.races.create(
-            name=name,
-            date=date,
-            distance=distance,
-            priority=priority,
-            target_time=target_time,
-        )
+        try:
+            race = await repos.races.create(
+                name=name,
+                date=date,
+                distance=distance,
+                priority=priority,
+                target_time=target_time,
+                goal_id=goal_id,
+            )
+        except LookupError as exc:
+            raise ToolError(str(exc)) from exc
+        return race.model_dump(mode="json")
+
+    @mcp.tool
+    async def link_race_to_goal(race_id: int, goal_id: int) -> dict:
+        """Attach an existing race to a goal (sets races.goal_id)."""
+        try:
+            race = await repos.races.link_goal(race_id, goal_id)
+        except LookupError as exc:
+            raise ToolError(str(exc)) from exc
+        if race is None:
+            raise ToolError(f"race {race_id} not found")
         return race.model_dump(mode="json")
 
     @mcp.tool

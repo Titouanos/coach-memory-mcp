@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # --- shared constrained types ----------------------------------------------
 GoalType = Literal["race", "perf", "habit"]
 GoalStatus = Literal["active", "hit", "missed", "abandoned"]
+GoalHorizon = Literal["long_term", "season", "block"]
 RacePriority = Literal["A", "B", "C"]
 Rpe = Annotated[int, Field(ge=1, le=10, description="Rate of perceived exertion, 1-10")]
 
@@ -53,6 +54,8 @@ class Goal(BaseModel):
     target_date: Optional[dt.date] = None
     status: GoalStatus
     notes: Optional[str] = None
+    parent_id: Optional[int] = None
+    horizon: Optional[GoalHorizon] = None
     created_at: dt.datetime
 
 
@@ -66,6 +69,7 @@ class Race(BaseModel):
     target_time: Optional[str] = None
     actual_time: Optional[str] = None
     result_notes: Optional[str] = None
+    goal_id: Optional[int] = None
     created_at: dt.datetime
 
 
@@ -115,6 +119,22 @@ class SearchHit(BaseModel):
 
 
 # --- input models ------------------------------------------------------------
+class GoalUpdate(BaseModel):
+    """Partial goal edit. Only fields explicitly set (and non-null) are written.
+
+    Status is deliberately excluded — update_goal_status is the single path for
+    status transitions.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    description: Optional[str] = None
+    target_value: Optional[str] = None
+    target_date: Optional[dt.date] = None
+    notes: Optional[str] = None
+    parent_id: Optional[int] = None
+    horizon: Optional[GoalHorizon] = None
+
+
 class AthleteProfileUpdate(BaseModel):
     """Partial update. Only fields explicitly set are written (upsert)."""
 
