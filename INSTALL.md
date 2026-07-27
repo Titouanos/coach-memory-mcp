@@ -46,11 +46,14 @@ Sur votre poste :
   client local de parler à un serveur MCP distant.
 - Un **compte Garmin Connect** avec des données dedans.
 
-Pour héberger coach-memory :
+Pour héberger coach-memory, **dans tous les cas** :
+
+- **Docker** + le plugin `compose`.
+
+Et **uniquement si vous choisissez la [variante B](#variante-b--sur-un-serveur-accessible-en-https)** (serveur distant) :
 
 - une machine Linux accessible depuis Internet (un VPS à 5 €/mois suffit),
-- un **nom de domaine** pointant dessus (Claude exige HTTPS pour un MCP distant),
-- **Docker** + le plugin `compose`.
+- un **nom de domaine** pointant dessus.
 
 ---
 
@@ -82,6 +85,64 @@ uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp --
 ---
 
 ## Étape 2 — le serveur coach-memory
+
+Deux variantes, **au choix** — les outils et les données sont identiques, seule la
+façon d'y accéder change :
+
+| | [Variante A — tout en local](#variante-a--tout-sur-votre-machine) | [Variante B — serveur distant](#variante-b--sur-un-serveur-accessible-en-https) |
+|---|---|---|
+| Il vous faut | Docker, rien d'autre | un VPS + un domaine + Docker |
+| Mise en place | ~5 minutes | ~30 minutes (DNS, Nginx, certbot) |
+| Vos données sont | sur votre machine | sur votre serveur |
+| Utilisable depuis | Claude Desktop, sur ce poste uniquement | Claude Desktop **et** claude.ai, depuis n'importe où |
+| Il faut que… | Docker tourne quand vous ouvrez Claude | rien (le serveur tourne en permanence) |
+
+**Commencez par la variante A** si vous n'avez pas déjà un serveur : c'est le même
+outil, sans VPS, sans domaine, sans TLS. On peut migrer vers B plus tard (un
+`pg_dump` suffit).
+
+---
+
+### Variante A — tout sur votre machine
+
+```bash
+git clone https://github.com/Titouanos/coach-memory-mcp.git ~/coach-memory
+cd ~/coach-memory
+cp .env.example .env
+```
+
+Éditez `.env` :
+
+```bash
+openssl rand -hex 32      # → MCP_AUTH_TOKEN
+openssl rand -hex 24      # → POSTGRES_PASSWORD (à répercuter dans DATABASE_URL)
+```
+
+Le token reste utile même en local : il empêche tout autre process de votre
+machine de parler au serveur. Laissez `AUTH_ENABLED=true`.
+
+```bash
+docker compose up -d --build
+curl -s http://127.0.0.1:8000/healthz      # {"status":"ok","db":true}
+```
+
+C'est tout — pas de Nginx, pas de certificat. Le compose ne publie le port que sur
+`127.0.0.1`, donc rien n'est exposé au réseau. Passez à l'[étape 3](#étape-3--brancher-les-deux-dans-claude-desktop)
+avec l'URL `http://127.0.0.1:8000/mcp`.
+
+> **Si le port 8000 est déjà pris** (`curl` renvoie autre chose que le JSON
+> attendu, ou `docker compose up` échoue), changez le port *hôte* dans
+> `docker-compose.yml` — `"127.0.0.1:8001:8000"` — et utilisez `:8001` dans l'URL.
+> Ne modifiez pas le port de droite, c'est celui de l'application.
+
+> **Ce qu'implique le mode local :** les conteneurs doivent tourner quand vous
+> utilisez Claude (`restart: unless-stopped` les relance au démarrage de Docker),
+> et votre historique d'entraînement vit dans un volume Docker sur ce poste
+> uniquement — voir la sauvegarde dans [Entretien](#entretien).
+
+---
+
+### Variante B — sur un serveur, accessible en HTTPS
 
 ### 2.1 Déployez
 
@@ -178,7 +239,7 @@ Si le premier appel ne renvoie pas 401, arrêtez-vous là : `AUTH_ENABLED` n'est
       "command": "npx",
       "args": [
         "-y", "mcp-remote",
-        "https://votre-domaine.example/mcp",
+        "http://127.0.0.1:8000/mcp",
         "--header",
         "Authorization: Bearer VOTRE_MCP_AUTH_TOKEN"
       ]
@@ -186,6 +247,16 @@ Si le premier appel ne renvoie pas 401, arrêtez-vous là : `AUTH_ENABLED` n'est
   }
 }
 ```
+
+**L'URL dépend de la variante choisie à l'étape 2 :**
+
+| Variante | URL à mettre |
+|---|---|
+| A — local | `http://127.0.0.1:8000/mcp` (en `http`, c'est normal : le trafic ne quitte pas la machine) |
+| B — serveur | `https://votre-domaine.example/mcp` |
+
+`mcp-remote` sert de pont entre Claude Desktop (qui parle `stdio`) et un serveur
+MCP HTTP — y compris quand ce serveur est sur `localhost`.
 
 Trois pièges :
 
@@ -202,10 +273,12 @@ Trois pièges :
 Redémarrez Claude Desktop. Les deux serveurs doivent apparaître dans la liste des
 connecteurs, avec leurs outils.
 
-> **Variante claude.ai (sans Claude Desktop).** coach-memory étant un MCP
-> distant, on peut aussi l'ajouter comme *connecteur custom* : Settings →
-> Connectors → Add custom connector → URL `https://votre-domaine.example/mcp`,
-> authentification **Bearer token**. En revanche le MCP Garmin est un process
+> **Variante claude.ai (sans Claude Desktop) — variante B uniquement.** Si
+> coach-memory est sur un serveur joignable en HTTPS, on peut aussi l'ajouter comme
+> *connecteur custom* : Settings → Connectors → Add custom connector → URL
+> `https://votre-domaine.example/mcp`, authentification **Bearer token**. Cela ne
+> marche **pas** avec la variante A : le cloud Anthropic ne peut pas joindre le
+> `127.0.0.1` de votre machine. En revanche le MCP Garmin est un process
 > local (`stdio`) : il n'est pas joignable depuis le cloud Anthropic. En mode
 > connecteur cloud, vous pouvez en plus restreindre le 443 aux plages IP
 > d'Anthropic (voir [README](README.md#sécurité--firewall--bearer)) — mais **ne
@@ -255,7 +328,7 @@ L'ordre compte : la mémoire est vide au départ, il faut l'amorcer.
 | Quoi | Fréquence | Comment |
 |------|-----------|---------|
 | **Jetons Garmin** | ~6 mois | relancer `garmin-mcp-auth` (étape 1.1). Symptôme d'expiration : les outils Garmin renvoient une erreur d'authentification. Mettez-vous un rappel. |
-| **Certificat TLS** | 90 jours | certbot renouvelle tout seul ; vérifiez que le hook de reload atteint bien votre proxy (`certbot renew --dry-run`). |
+| **Certificat TLS** *(variante B seulement)* | 90 jours | certbot renouvelle tout seul ; vérifiez que le hook de reload atteint bien votre proxy (`certbot renew --dry-run`). |
 | **Sauvegarde Postgres** | à vous de voir | c'est votre historique d'entraînement, et il n'est nulle part ailleurs : `docker compose exec postgres pg_dump -U coach coach_memory > backup.sql`. |
 | **Rotation du token** | si suspicion de fuite | nouveau `MCP_AUTH_TOKEN` dans `.env`, `docker compose up -d --build`, puis mise à jour de la config Claude. |
 | **Mises à jour du code** | au besoin | `git pull && docker compose up -d --build` ; les migrations sont append-only et s'appliquent au boot. |
