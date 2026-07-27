@@ -10,7 +10,9 @@
 #
 set -euo pipefail
 
-DOMAIN="mcp.feed-athlete.com"
+# Your MCP hostname. Override without editing this file:
+#   sudo DOMAIN=mcp.example.org bash setup-droplet.sh
+DOMAIN="${DOMAIN:?set DOMAIN to your MCP hostname, e.g. DOMAIN=mcp.example.org}"
 
 # -----------------------------------------------------------------------------
 # Anthropic IP ranges allowed to reach 443 (custom connectors call FROM the

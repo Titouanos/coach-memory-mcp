@@ -12,6 +12,20 @@ toucher au cœur.
 > objectifs, courses, séances (prévu vs réalisé + ressenti), décisions et
 > analyses.
 
+> 🚀 **Vous voulez juste l'installer ?** Suivez **[INSTALL.md](INSTALL.md)** : le
+> parcours complet de bout en bout (MCP Garmin + ce serveur + configuration de
+> Claude Desktop + premiers pas). Le présent README documente l'architecture, les
+> outils et le déploiement en détail.
+>
+> ⚠️ **Une instance = un athlète.** Le profil est un singleton et le token d'auth
+> est unique : partager l'URL et le token, c'est partager les données. Le
+> multi-tenant n'est pas implémenté — pour plusieurs athlètes, une instance
+> chacun.
+>
+> Dans tout ce document, `mcp.feed-athlete.com` est le **déploiement de
+> référence de l'auteur**, cité en exemple concret. Remplacez-le partout par
+> votre propre domaine.
+
 ---
 
 ## Sommaire

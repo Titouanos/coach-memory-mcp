@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# Local tooling state (Claude Code session/lock files — machine-specific)
+.claude/
+
 # Python
 __pycache__/
 *.pyc
