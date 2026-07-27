@@ -88,7 +88,7 @@ uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp --
 Sur votre serveur :
 
 ```bash
-git clone https://github.com/<VOTRE-COMPTE>/coach-memory-mcp.git /opt/coach-memory
+git clone https://github.com/Titouanos/coach-memory-mcp.git /opt/coach-memory
 cd /opt/coach-memory
 cp .env.example .env
 ```

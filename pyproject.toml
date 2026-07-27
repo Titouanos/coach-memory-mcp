@@ -15,6 +15,11 @@ dependencies = [
     "uvicorn>=0.30",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Titouanos/coach-memory-mcp"
+Source = "https://github.com/Titouanos/coach-memory-mcp"
+Issues = "https://github.com/Titouanos/coach-memory-mcp/issues"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
