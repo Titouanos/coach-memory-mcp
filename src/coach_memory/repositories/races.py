@@ -8,8 +8,8 @@ from ..models import Race
 from .base import BaseRepository
 
 _COLS = (
-    "id, name, date, distance, priority, target_time, actual_time, result_notes, "
-    "goal_id, created_at"
+    "id, name, date, distance, priority, status, target_time, actual_time, "
+    "result_notes, goal_id, created_at"
 )
 
 
@@ -62,11 +62,36 @@ class RaceRepository(BaseRepository):
             cur = await conn.execute(
                 f"""
                 UPDATE coach.races
-                SET actual_time = %s, result_notes = %s
+                SET actual_time = %s, result_notes = %s, status = 'done'
                 WHERE id = %s
                 RETURNING {_COLS}
                 """,
                 (actual_time, result_notes, race_id),
+            )
+            row = await cur.fetchone()
+        return Race(**row) if row else None
+
+    async def update_status(self, race_id: int, status: str) -> Race | None:
+        """Change le statut d une course. Retourne None si elle n existe pas."""
+        async with self.pool.connection() as conn:
+            cur = await conn.execute(
+                f"UPDATE coach.races SET status = %s WHERE id = %s RETURNING {_COLS}",
+                (status, race_id),
+            )
+            row = await cur.fetchone()
+        return Race(**row) if row else None
+
+    async def delete(self, race_id: int) -> Race | None:
+        """Supprime definitivement une course.
+
+        Reserve aux saisies erronees. Pour une course annulee, preferer
+        update_status(..., "cancelled") : cela conserve la trace qu elle avait
+        ete planifiee, ce qui est le propre d une memoire de coaching.
+        """
+        async with self.pool.connection() as conn:
+            cur = await conn.execute(
+                f"DELETE FROM coach.races WHERE id = %s RETURNING {_COLS}",
+                (race_id,),
             )
             row = await cur.fetchone()
         return Race(**row) if row else None
@@ -77,9 +102,14 @@ class RaceRepository(BaseRepository):
         on_or_after: dt.date,
         priorities: list[str] | None = None,
         limit: int | None = None,
+        include_cancelled: bool = False,
     ) -> list[Race]:
         clauses = ["date >= %s"]
         params: list[object] = [on_or_after]
+        # Une course annulee n est plus « a venir » : l exclure par defaut evite
+        # qu une planification automatique continue de compter avec elle.
+        if not include_cancelled:
+            clauses.append("status <> 'cancelled'")
         if priorities:
             clauses.append("priority = ANY(%s)")
             params.append(priorities)

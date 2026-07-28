@@ -25,6 +25,9 @@ GoalStatus = Literal["active", "hit", "missed", "abandoned"]
 GoalHorizon = Literal["long_term", "season", "block"]
 PlanStatus = Literal["planned", "done", "skipped", "modified"]
 RacePriority = Literal["A", "B", "C"]
+# "cancelled" retire la course des listes a venir sans effacer la trace de sa
+# planification, comme "abandoned" le fait pour un objectif (migration 0006).
+RaceStatus = Literal["planned", "done", "cancelled"]
 Rpe = Annotated[int, Field(ge=1, le=10, description="Rate of perceived exertion, 1-10")]
 
 _STRICT = ConfigDict(extra="ignore")  # tolerate unselected extra columns defensively
@@ -67,6 +70,7 @@ class Race(BaseModel):
     date: dt.date
     distance: Optional[str] = None
     priority: RacePriority
+    status: RaceStatus = "planned"
     target_time: Optional[str] = None
     actual_time: Optional[str] = None
     result_notes: Optional[str] = None
