@@ -165,19 +165,29 @@ class DailyMetricsUpdate(BaseModel):
     are written; a null never erases a stored value."""
 
     model_config = ConfigDict(extra="forbid")
-    hrv_ms: Optional[int] = Field(default=None, ge=0)
+    # Bornes HAUTES ajoutees le 28/07/2026. Sans elles, une valeur aberrante
+    # traversait Pydantic et se cassait sur la colonne Postgres, dont l'erreur
+    # remontait telle quelle au client (colonnes etroites : ctl/atl/tsb sont en
+    # numeric(6,2), donc plafonnees a 9999.99). Les bornes sont volontairement
+    # GENEREUSES : elles servent a attraper une faute de frappe grossiere et a
+    # publier une plage sensee dans le JSON Schema des outils, pas a imposer une
+    # physiologie stricte.
+    hrv_ms: Optional[int] = Field(default=None, ge=0, le=2000)
     hrv_status: Optional[str] = None
     sleep_score: Optional[int] = Field(default=None, ge=0, le=100)
-    sleep_duration_min: Optional[int] = Field(default=None, ge=0)
-    resting_hr: Optional[int] = Field(default=None, gt=0)
+    # 1440 minutes = 24 h : on ne peut pas dormir davantage dans une journee.
+    sleep_duration_min: Optional[int] = Field(default=None, ge=0, le=1440)
+    resting_hr: Optional[int] = Field(default=None, gt=0, le=300)
     body_battery_start: Optional[int] = Field(default=None, ge=0, le=100)
     body_battery_end: Optional[int] = Field(default=None, ge=0, le=100)
     training_readiness: Optional[int] = Field(default=None, ge=0, le=100)
-    ctl: Optional[float] = None
-    atl: Optional[float] = None
-    tsb: Optional[float] = None
-    vo2max_run: Optional[float] = Field(default=None, gt=0)
-    vo2max_bike: Optional[float] = Field(default=None, gt=0)
+    # numeric(6,2) : charges cumulees, positives par nature.
+    ctl: Optional[float] = Field(default=None, ge=0, le=5000)
+    atl: Optional[float] = Field(default=None, ge=0, le=5000)
+    # tsb = ctl - atl, donc legitimement negatif en surcharge.
+    tsb: Optional[float] = Field(default=None, ge=-5000, le=5000)
+    vo2max_run: Optional[float] = Field(default=None, gt=0, le=150)
+    vo2max_bike: Optional[float] = Field(default=None, gt=0, le=150)
     raw: Optional[dict] = None
 
 
@@ -190,7 +200,7 @@ class PlannedWorkoutCreate(BaseModel):
     title: str
     type: Optional[str] = None
     description: Optional[str] = None
-    target_load: Optional[int] = Field(default=None, ge=0)
+    target_load: Optional[int] = Field(default=None, ge=0, le=10000)
     block_label: Optional[str] = None
     goal_id: Optional[int] = None
 
@@ -204,7 +214,7 @@ class PlannedWorkoutUpdate(BaseModel):
     type: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
-    target_load: Optional[int] = Field(default=None, ge=0)
+    target_load: Optional[int] = Field(default=None, ge=0, le=10000)
     block_label: Optional[str] = None
     goal_id: Optional[int] = None
 
@@ -229,13 +239,16 @@ class AthleteProfileUpdate(BaseModel):
     """Partial update. Only fields explicitly set are written (upsert)."""
 
     model_config = ConfigDict(extra="forbid")
-    weight_kg: Optional[float] = Field(default=None, gt=0)
-    height_cm: Optional[float] = Field(default=None, gt=0)
-    vo2max_run: Optional[float] = Field(default=None, gt=0)
-    vo2max_bike: Optional[float] = Field(default=None, gt=0)
-    ftp: Optional[int] = Field(default=None, gt=0)
-    hr_max: Optional[int] = Field(default=None, gt=0)
-    lthr: Optional[int] = Field(default=None, gt=0)
+    # Bornes hautes ajoutees le 28/07/2026 : les colonnes sont etroites
+    # (weight_kg / vo2max en numeric(5,2) donc <= 999.99, height_cm en
+    # numeric(5,1)), et sans plafond l'erreur Postgres remontait au client.
+    weight_kg: Optional[float] = Field(default=None, gt=0, le=500)
+    height_cm: Optional[float] = Field(default=None, gt=0, le=300)
+    vo2max_run: Optional[float] = Field(default=None, gt=0, le=150)
+    vo2max_bike: Optional[float] = Field(default=None, gt=0, le=150)
+    ftp: Optional[int] = Field(default=None, gt=0, le=3000)
+    hr_max: Optional[int] = Field(default=None, gt=0, le=300)
+    lthr: Optional[int] = Field(default=None, gt=0, le=300)
     threshold_pace: Optional[str] = None
     hr_zones: Optional[dict] = None
     notes: Optional[str] = None

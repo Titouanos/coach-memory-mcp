@@ -64,6 +64,16 @@ def build_server(settings: Settings) -> tuple[FastMCP, object]:
         instructions=_INSTRUCTIONS,
         version=__version__,
         lifespan=lifespan,
+        # Sans ceci (defaut False), tout str(e) d'une exception non geree part au
+        # client : une valeur hors borne renvoyait le message d'erreur Postgres,
+        # divulguant la precision des colonnes et le nom des contraintes.
+        #
+        # Verifie empiriquement le 28/07/2026 : les ToolError levees
+        # volontairement par les outils ne sont PAS masquees (elles passent par
+        # la branche `except FastMCPError` en amont), donc les messages metier
+        # utiles du genre « race 999999 not found » sont preserves. Seules les
+        # fuites internes involontaires sont coupees.
+        mask_error_details=True,
     )
 
     for module in DOMAIN_MODULES:

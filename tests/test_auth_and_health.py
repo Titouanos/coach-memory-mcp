@@ -27,6 +27,49 @@ async def test_bad_token_rejected(settings):
     assert resp.status_code == 401
 
 
+async def test_non_ascii_authorization_header_yields_401_not_500(settings):
+    """Non-regression : un octet non-ASCII dans Authorization renvoyait un 500.
+
+    L'ancienne implementation decodait l'en-tete en latin-1 puis appelait
+    hmac.compare_digest sur des str. compare_digest REFUSE les str non-ASCII et
+    leve TypeError : `Authorization: \xff` produisait donc un HTTP 500 avec
+    traceback au lieu d'un 401, et le logger.warning de detection de bruteforce
+    n'etait jamais emis — le signal de detection etait aveugle sur ce chemin.
+
+    On passe les en-tetes en octets bruts via l'ASGI : un client HTTP refuserait
+    d'encoder un tel en-tete et le bug ne se reproduirait pas.
+    """
+    app = create_asgi_app(settings)
+
+    envois: list[dict] = []
+
+    async def send(message):
+        envois.append(message)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    for brut in (b"\xff", "Bearer café".encode("utf-8"), b"Bearer \xc3"):
+        envois.clear()
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/mcp",
+            "raw_path": b"/mcp",
+            "query_string": b"",
+            "root_path": "",
+            "server": ("t", 80),
+            "client": ("1.2.3.4", 1234),
+            "headers": [(b"host", b"t"), (b"authorization", brut)],
+        }
+        await app(scope, receive, send)
+        debut = next(m for m in envois if m["type"] == "http.response.start")
+        assert debut["status"] == 401, f"en-tete {brut!r} -> {debut['status']}, attendu 401"
+
+
 async def test_healthz_unauthenticated_ok(settings):
     app = create_asgi_app(settings)
     # /healthz is exempt from auth but needs the pool open → drive the lifespan.

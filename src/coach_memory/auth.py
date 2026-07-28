@@ -30,7 +30,19 @@ class BearerAuthMiddleware:
         exempt_paths: tuple[str, ...] = ("/healthz",),
     ) -> None:
         self.app = app
-        self._expected = f"Bearer {token}"
+        # Comparaison en BYTES de bout en bout, jamais en str.
+        #
+        # La version precedente faisait `.decode("latin-1")` sur l'en-tete puis
+        # comparait deux str. Or `hmac.compare_digest` REFUSE les str non-ASCII
+        # et leve TypeError : un seul octet non-ASCII dans l'en-tete
+        # (`Authorization: \xff`) suffisait a produire un HTTP 500 avec traceback
+        # au lieu d'un 401 — et surtout le `logger.warning` ci-dessous n'etait
+        # jamais emis, donc la detection de bruteforce etait aveugle sur ce
+        # chemin. Reproduit puis corrige le 28/07/2026.
+        #
+        # `compare_digest` sur bytes accepte n'importe quel octet et reste a
+        # temps constant : on ne perd rien contre les attaques temporelles.
+        self._expected = b"Bearer " + token.encode("utf-8")
         # Normalize trailing slashes so both "/healthz" and "/healthz/" are exempt
         # (routing-layer slash redirects happen AFTER this middleware).
         self._exempt = {p.rstrip("/") for p in exempt_paths}
@@ -46,7 +58,9 @@ class BearerAuthMiddleware:
             return
 
         headers = dict(scope.get("headers") or [])
-        provided = headers.get(b"authorization", b"").decode("latin-1")
+        # Reste en bytes : c'est ce que l'ASGI fournit, et ce que compare_digest
+        # accepte sans condition d'encodage.
+        provided = headers.get(b"authorization", b"")
 
         # constant-time compare avoids leaking token length/prefix via timing
         if not provided or not hmac.compare_digest(provided, self._expected):
