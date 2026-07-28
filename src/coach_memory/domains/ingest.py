@@ -144,40 +144,78 @@ def _build_summary(n: dict) -> str:
     return ", ".join(parts)
 
 
-def _gauge(value: Any) -> int | None:
+def _gauge(value: Any, hi: int | None = None) -> int | None:
     """Gauge metrics (HRV, sleep, readiness, resting HR, body battery, VO2max):
     Garmin emits 0 as a 'no reading' sentinel — treat any non-positive value as
-    missing rather than letting it fail validation downstream."""
+    missing rather than letting it fail validation downstream.
+
+    `hi` etend la meme logique au HAUT de la plage. Au-dela du plafond accepte
+    par DailyMetricsUpdate, c'est un artefact de capteur, pas une intention : on
+    jette le champ comme le sentinel 0, au lieu de laisser la ValidationError
+    faire echouer TOUTE l'ingestion — seance d'entrainement incluse — pour un
+    seul champ de bien-etre. Le blob source reste intact dans daily_metrics.raw,
+    donc la valeur brute demeure auditable et rien n'est perdu.
+    """
     n = _as_int(value)
-    return n if n is not None and n > 0 else None
+    if n is None or n <= 0:
+        return None
+    return None if hi is not None and n > hi else n
 
 
-def _gauge_f(value: Any) -> float | None:
+def _gauge_f(value: Any, hi: float | None = None) -> float | None:
     f = _as_float(value)
-    return f if f is not None and f > 0 else None
+    if f is None or f <= 0:
+        return None
+    return None if hi is not None and f > hi else f
+
+
+def _in_range(value: Any, lo: float, hi: float) -> float | None:
+    """Nombres de charge (ctl / atl / tsb).
+
+    Ici 0 est porteur de sens et tsb est legitimement negatif : on ne filtre donc
+    PAS sur le signe, seulement sur la plage acceptee par DailyMetricsUpdate.
+    Rejette aussi NaN et les infinis, qu'une simple borne basse laissait passer.
+    """
+    f = _as_float(value)
+    if f is None or f != f:  # NaN
+        return None
+    return f if lo <= f <= hi else None
 
 
 def _normalize_daily(daily: dict) -> dict:
+    # Les plafonds ci-dessous DOIVENT rester alignes sur ceux de
+    # DailyMetricsUpdate (models.py). Un champ hors plage est jete ici plutot
+    # que de faire echouer l'ingestion entiere : c'est la lecon d'une regression
+    # du 28/07/2026, ou une borne posee sur le modele sans filtre correspondant
+    # ici faisait perdre la seance d'entrainement pour un ctl negatif envoye par
+    # Garmin. Un appel EXPLICITE a upsert_daily_metrics, lui, continue de
+    # rejeter une valeur aberrante : c'est une intention, pas un artefact.
     candidates = {
         "hrv_ms": _gauge(_pick(daily, "hrv_ms", "lastNightAvg", "avgOvernightHrv",
-                               "hrvSummary.lastNightAvg")),
+                               "hrvSummary.lastNightAvg"), hi=500),
         "hrv_status": _pick(daily, "hrv_status", "hrvStatus", "hrvSummary.status"),
         "sleep_score": _gauge(_pick(daily, "sleep_score", "sleepScore",
-                                    "overallSleepScore", "sleepScores.overall.value")),
-        "sleep_duration_min": _gauge(_pick(daily, "sleep_duration_min", "sleepTimeMinutes")),
-        "resting_hr": _gauge(_pick(daily, "resting_hr", "restingHeartRate", "restingHR")),
-        "body_battery_start": _gauge(_pick(daily, "body_battery_start", "bodyBatteryAtWake")),
-        "body_battery_end": _gauge(_pick(daily, "body_battery_end", "bodyBatteryMostRecent")),
+                                    "overallSleepScore", "sleepScores.overall.value"), hi=100),
+        "sleep_duration_min": _gauge(_pick(daily, "sleep_duration_min", "sleepTimeMinutes"),
+                                     hi=1440),
+        "resting_hr": _gauge(_pick(daily, "resting_hr", "restingHeartRate", "restingHR"),
+                             hi=250),
+        "body_battery_start": _gauge(_pick(daily, "body_battery_start", "bodyBatteryAtWake"),
+                                     hi=100),
+        "body_battery_end": _gauge(_pick(daily, "body_battery_end", "bodyBatteryMostRecent"),
+                                   hi=100),
         "training_readiness": _gauge(_pick(daily, "training_readiness",
-                                           "trainingReadiness", "trainingReadiness.score")),
-        # load-balance numbers: 0 and negatives are meaningful, keep verbatim
-        "ctl": _as_float(_pick(daily, "ctl")),
-        "atl": _as_float(_pick(daily, "atl")),
-        "tsb": _as_float(_pick(daily, "tsb")),
-        "vo2max_run": _gauge_f(_pick(daily, "vo2max_run", "vo2MaxValue")),
-        "vo2max_bike": _gauge_f(_pick(daily, "vo2max_bike", "vo2MaxCyclingValue")),
+                                           "trainingReadiness", "trainingReadiness.score"),
+                                     hi=100),
+        # Charges : 0 compte, et tsb est legitimement negatif — on borne la
+        # plage sans filtrer le signe.
+        "ctl": _in_range(_pick(daily, "ctl"), 0, 1000),
+        "atl": _in_range(_pick(daily, "atl"), 0, 1000),
+        "tsb": _in_range(_pick(daily, "tsb"), -1000, 1000),
+        "vo2max_run": _gauge_f(_pick(daily, "vo2max_run", "vo2MaxValue"), hi=100),
+        "vo2max_bike": _gauge_f(_pick(daily, "vo2max_bike", "vo2MaxCyclingValue"), hi=100),
     }
-    sleep_seconds = _gauge(_pick(daily, "sleepTimeSeconds"))
+    sleep_seconds = _gauge(_pick(daily, "sleepTimeSeconds"), hi=1440 * 60)
     if candidates["sleep_duration_min"] is None and sleep_seconds is not None:
         candidates["sleep_duration_min"] = sleep_seconds // 60
     normalized = {k: v for k, v in candidates.items() if v is not None}

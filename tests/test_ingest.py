@@ -164,6 +164,52 @@ async def test_ingest_tolerates_garmin_zero_sentinels(client):
     assert len(sessions) == 1                  # exactly one session, no orphan
 
 
+async def test_ingest_survives_out_of_range_wellness_fields(client):
+    """Non-regression : un champ de bien-etre aberrant ne doit PAS faire perdre
+    la seance d entrainement.
+
+    Le commit 1c0eb7b avait pose des bornes sur DailyMetricsUpdate sans filtre
+    correspondant dans _normalize_daily, qui passait ctl/atl/tsb verbatim. Un
+    ctl negatif envoye par Garmin levait donc une ValidationError AVANT la
+    creation de la seance : toute l ingestion etait perdue pour un champ
+    accessoire. Le filtre jette desormais le champ hors plage comme le
+    sentinel 0, et le blob source reste intact.
+    """
+    daily_aberrant = {
+        "ctl": -3.0,                    # negatif : hors plage ge=0
+        "atl": -0.5,
+        "tsb": float("inf"),            # infini : passait sous une simple borne basse
+        "lastNightAvg": 6000,           # artefact de capteur
+        "sleepTimeSeconds": 10**9,      # duree absurde
+        "sleepScore": 86,               # ces deux-la sont valides et doivent survivre
+        "restingHeartRate": 45,
+    }
+    res = (
+        await client.call_tool(
+            "ingest_garmin_activity",
+            {"activity": ACTIVITY_CONNECT, "daily": daily_aberrant},
+        )
+    ).data
+
+    metrics = res["daily_metrics"]
+    # champs hors plage jetes, pas d erreur
+    assert metrics["ctl"] is None
+    assert metrics["atl"] is None
+    assert metrics["tsb"] is None
+    assert metrics["hrv_ms"] is None
+    assert metrics["sleep_duration_min"] is None
+    # champs valides conserves
+    assert metrics["sleep_score"] == 86
+    assert metrics["resting_hr"] == 45
+    # rien n est perdu : le blob source garde les valeurs brutes
+    assert metrics["raw"]["ctl"] == -3.0
+    assert metrics["raw"]["lastNightAvg"] == 6000
+
+    # et surtout : la SEANCE existe bien
+    sessions = (await client.call_tool("get_recent_sessions", {})).data
+    assert len(sessions) == 1
+
+
 async def test_ingest_idempotent_no_duplicate_sessions(client):
     for _ in range(3):
         res = (

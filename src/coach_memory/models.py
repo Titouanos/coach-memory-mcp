@@ -172,22 +172,22 @@ class DailyMetricsUpdate(BaseModel):
     # GENEREUSES : elles servent a attraper une faute de frappe grossiere et a
     # publier une plage sensee dans le JSON Schema des outils, pas a imposer une
     # physiologie stricte.
-    hrv_ms: Optional[int] = Field(default=None, ge=0, le=2000)
+    hrv_ms: Optional[int] = Field(default=None, ge=0, le=500)  # RMSSD nocturne ~20-120, 200 chez l'elite
     hrv_status: Optional[str] = None
     sleep_score: Optional[int] = Field(default=None, ge=0, le=100)
     # 1440 minutes = 24 h : on ne peut pas dormir davantage dans une journee.
     sleep_duration_min: Optional[int] = Field(default=None, ge=0, le=1440)
-    resting_hr: Optional[int] = Field(default=None, gt=0, le=300)
+    resting_hr: Optional[int] = Field(default=None, gt=0, le=250)  # plafond clinique
     body_battery_start: Optional[int] = Field(default=None, ge=0, le=100)
     body_battery_end: Optional[int] = Field(default=None, ge=0, le=100)
     training_readiness: Optional[int] = Field(default=None, ge=0, le=100)
     # numeric(6,2) : charges cumulees, positives par nature.
-    ctl: Optional[float] = Field(default=None, ge=0, le=5000)
-    atl: Optional[float] = Field(default=None, ge=0, le=5000)
+    ctl: Optional[float] = Field(default=None, ge=0, le=1000)  # un pic de pro ~150-180
+    atl: Optional[float] = Field(default=None, ge=0, le=1000)
     # tsb = ctl - atl, donc legitimement negatif en surcharge.
-    tsb: Optional[float] = Field(default=None, ge=-5000, le=5000)
-    vo2max_run: Optional[float] = Field(default=None, gt=0, le=150)
-    vo2max_bike: Optional[float] = Field(default=None, gt=0, le=150)
+    tsb: Optional[float] = Field(default=None, ge=-1000, le=1000)
+    vo2max_run: Optional[float] = Field(default=None, gt=0, le=100)  # record humain ~97,5
+    vo2max_bike: Optional[float] = Field(default=None, gt=0, le=100)
     raw: Optional[dict] = None
 
 
@@ -200,7 +200,7 @@ class PlannedWorkoutCreate(BaseModel):
     title: str
     type: Optional[str] = None
     description: Optional[str] = None
-    target_load: Optional[int] = Field(default=None, ge=0, le=10000)
+    target_load: Optional[int] = Field(default=None, ge=0, le=2000)  # un Ironman ~500-600 TSS
     block_label: Optional[str] = None
     goal_id: Optional[int] = None
 
@@ -214,7 +214,7 @@ class PlannedWorkoutUpdate(BaseModel):
     type: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
-    target_load: Optional[int] = Field(default=None, ge=0, le=10000)
+    target_load: Optional[int] = Field(default=None, ge=0, le=2000)  # un Ironman ~500-600 TSS
     block_label: Optional[str] = None
     goal_id: Optional[int] = None
 
@@ -242,13 +242,13 @@ class AthleteProfileUpdate(BaseModel):
     # Bornes hautes ajoutees le 28/07/2026 : les colonnes sont etroites
     # (weight_kg / vo2max en numeric(5,2) donc <= 999.99, height_cm en
     # numeric(5,1)), et sans plafond l'erreur Postgres remontait au client.
-    weight_kg: Optional[float] = Field(default=None, gt=0, le=500)
-    height_cm: Optional[float] = Field(default=None, gt=0, le=300)
-    vo2max_run: Optional[float] = Field(default=None, gt=0, le=150)
-    vo2max_bike: Optional[float] = Field(default=None, gt=0, le=150)
-    ftp: Optional[int] = Field(default=None, gt=0, le=3000)
-    hr_max: Optional[int] = Field(default=None, gt=0, le=300)
-    lthr: Optional[int] = Field(default=None, gt=0, le=300)
+    weight_kg: Optional[float] = Field(default=None, gt=0, le=300)
+    height_cm: Optional[float] = Field(default=None, gt=0, le=250)  # record humain 272 cm
+    vo2max_run: Optional[float] = Field(default=None, gt=0, le=100)
+    vo2max_bike: Optional[float] = Field(default=None, gt=0, le=100)
+    ftp: Optional[int] = Field(default=None, gt=0, le=1000)  # record de l'heure ~440-450 W
+    hr_max: Optional[int] = Field(default=None, gt=0, le=250)
+    lthr: Optional[int] = Field(default=None, gt=0, le=250)  # lthr <= hr_max
     threshold_pace: Optional[str] = None
     hr_zones: Optional[dict] = None
     notes: Optional[str] = None
