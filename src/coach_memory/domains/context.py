@@ -16,7 +16,23 @@ from ..repositories import Repositories
 _RECENT_SESSIONS = 10
 _RECENT_ANALYSES = 3
 _METRICS_DAYS = 7
-_CONTEXT_RACE_PRIORITIES = ["A", "B"]
+# Le digest remontait UNIQUEMENT les courses A et B. Les courses de priorite C
+# etaient donc invisibles pour qui se fiait a get_athlete_context — ce qui a
+# reellement coute une erreur de planification le 29/07/2026 : le 5 km de Vannes
+# du 12/09, enregistre en C le 20/07, a ete oublie dans la construction du bloc
+# Londres, et il a fallu une decision de coaching (id=16) pour rattraper le
+# coup et poser la regle « toujours appeler get_upcoming_races en plus ».
+#
+# Une regle qu'il faut se rappeler d'appliquer est une regle qui sera oubliee.
+# On corrige donc la cause : le digest remonte TOUTES les courses a venir. Le
+# cout est negligeable — 2 lignes de plus dans le cas reel — et chaque course
+# porte deja sa `priority`, donc l'appelant garde toute latitude pour la
+# ponderer. Une course inscrite au calendrier contraint la planification, quelle
+# que soit sa priorite.
+#
+# `None` = aucun filtre de priorite (les annulees restent exclues par
+# `upcoming`, ce qui est le comportement voulu).
+_CONTEXT_RACE_PRIORITIES = None
 
 # Week-plan digest stays small: everything except the big free-text fields.
 _WEEK_PLAN_KEYS = ("id", "date", "sport", "type", "title", "status",
@@ -29,7 +45,9 @@ def register(mcp: FastMCP, repos: Repositories) -> None:
         """Return a compact digest of the athlete's current coaching state.
 
         One call yields: profile, hierarchical active goals (parent_id/horizon),
-        upcoming A/B races, the current training week (planned workouts +
+        ALL upcoming races whatever their priority — cancelled ones excluded —
+        each carrying its own A/B/C priority, the current training week
+        (planned workouts +
         status, without long descriptions), the last 7 days of daily metrics
         (hrv, sleep, readiness, tsb), the last 10 sessions, active coaching
         decisions, and the last 3 analyses. Call this first in a coaching

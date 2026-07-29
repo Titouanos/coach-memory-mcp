@@ -106,6 +106,38 @@ async def test_races_lifecycle(client):
         await client.call_tool("record_race_result", {"race_id": 999999, "actual_time": "40:00"})
 
 
+async def test_context_includes_priority_c_races(client):
+    """Non-regression : le digest doit remonter les courses C.
+
+    get_athlete_context filtrait sur ["A", "B"], donc les courses de priorite C
+    etaient invisibles pour qui se fiait au digest. Cela a reellement coute une
+    erreur de planification le 29/07/2026 (5 km de Vannes en C, oublie dans le
+    bloc Londres). Une course annulee, elle, doit rester exclue.
+    """
+    await client.call_tool(
+        "add_race", {"name": "A-race", "date": "2026-11-29", "priority": "A"}
+    )
+    await client.call_tool(
+        "add_race", {"name": "Course C oubliable", "date": "2026-09-12", "priority": "C"}
+    )
+    annulee = await client.call_tool(
+        "add_race", {"name": "Course annulee", "date": "2026-10-01", "priority": "B"}
+    )
+    await client.call_tool(
+        "update_race_status", {"race_id": annulee.data["id"], "status": "cancelled"}
+    )
+
+    ctx = (await client.call_tool("get_athlete_context", {})).data
+    noms = [r["name"] for r in ctx["upcoming_races"]]
+
+    assert "A-race" in noms
+    assert "Course C oubliable" in noms, "les courses C doivent etre visibles dans le digest"
+    assert "Course annulee" not in noms, "une course annulee reste exclue"
+    # la priorite reste exposee pour que l appelant puisse ponderer
+    c = next(r for r in ctx["upcoming_races"] if r["name"] == "Course C oubliable")
+    assert c["priority"] == "C"
+
+
 async def test_race_status_cancel_removes_from_upcoming(client):
     """Une course annulee sort des listes a venir sans etre effacee.
 
