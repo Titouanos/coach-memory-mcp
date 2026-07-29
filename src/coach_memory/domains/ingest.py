@@ -284,6 +284,9 @@ def register(mcp: FastMCP, repos: Repositories) -> None:
                     type=None,
                     executed=summary or None,
                     garmin_activity_id=garmin_id,
+                    # Payload conserve (migration 0007) : le resume texte perdait
+                    # splits, cadence et FC par lap.
+                    raw=activity,
                 )
             except ValueError:
                 # lost a race with a concurrent ingest of the same activity —
@@ -319,4 +322,188 @@ def register(mcp: FastMCP, repos: Repositories) -> None:
             "session_reused": reused,
             "daily_metrics": metrics_out,
             "matched_workout": matched_out,
+        }
+
+    # ------------------------------------------------------------------ reprise
+    # Plafonds de lot. Le reverse proxy limite le corps de requete a 1 Mo sur le
+    # vhost MCP — garde-fou anti-DoS pose apres audit, qu'on ne releve PAS pour
+    # une commodite d'import. Une activite Garmin pese 2 a 10 Ko, d'ou ~150 par
+    # appel avec de la marge. Les blobs de bien-etre pesent ~300 octets, donc
+    # bien plus permissifs.
+    _MAX_ACTIVITES = 150
+    _MAX_DAILIES = 400
+    _MAX_ECHECS_RAPPORTES = 20
+
+    @mcp.tool
+    async def backfill_garmin_history(
+        activities: list[dict] | None = None,
+        dailies: list[dict] | None = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Import en masse d'un historique Garmin (activites + bien-etre).
+
+        A UTILISER pour constituer l'historique : reprise initiale, ou rattrapage
+        d'une periode manquante. Concu pour etre rejoue sans risque.
+
+        NE PAS UTILISER pour l'activite du jour : `ingest_garmin_activity` fait
+        cela mieux, car lui rapproche le realise du planifie.
+
+        Trois differences importantes avec `ingest_garmin_activity` :
+
+        1. AUCUN rapprochement avec le plan. Une activite historique ne doit pas
+           marquer 'done' un entrainement planifie : sur un historique long, elle
+           tomberait a +/-1 jour de workouts encore en attente et les cloturerait
+           a tort — y compris des seances futures non encore courues.
+        2. Ce qui EXISTE DEJA est IGNORE, jamais reecrit. Une activite dont
+           l'identifiant Garmin est connu est sautee ; une journee de bien-etre
+           deja en base est sautee. Motif : une valeur corrigee a la main a plus
+           de valeur que la donnee brute de Garmin, et un import ne doit pas
+           l'effacer.
+        3. Un element invalide n'interrompt PAS le lot. Il est saute et rapporte,
+           les autres passent.
+
+        Une activite SANS identifiant Garmin est refusee : elle serait dupliquee
+        au prochain import, faute de cle de deduplication.
+
+        Passer `dry_run=True` pour obtenir le rapport sans rien ecrire — recommande
+        avant un premier import volumineux.
+
+        Le payload brut de chaque activite est conserve (sessions.raw), ce qui
+        permet de recalculer splits, cadence et FC par lap plus tard sans
+        reinterroger Garmin.
+        """
+        activities = activities or []
+        dailies = dailies or []
+
+        if not activities and not dailies:
+            raise ToolError("rien a importer : fournis 'activities' et/ou 'dailies'")
+        if len(activities) > _MAX_ACTIVITES:
+            raise ToolError(
+                f"{len(activities)} activites en un appel, maximum {_MAX_ACTIVITES} : "
+                f"le proxy limite le corps de requete a 1 Mo. Decoupe en lots de "
+                f"{_MAX_ACTIVITES} (par exemple mois par mois) et rappelle l'outil ; "
+                f"il est concu pour etre rejoue sans doublon."
+            )
+        if len(dailies) > _MAX_DAILIES:
+            raise ToolError(
+                f"{len(dailies)} journees en un appel, maximum {_MAX_DAILIES}."
+            )
+
+        echecs: list[dict] = []
+        dates_vues: list[dt.date] = []
+
+        # ---- activites : on prepare TOUT avant d'ecrire quoi que ce soit -----
+        preparees: list[tuple[str, dict, dict]] = []  # (garmin_id, norm, activite)
+        for i, activite in enumerate(activities):
+            try:
+                norm = _normalize_activity(activite)
+            except Exception as exc:  # payload trop deforme pour etre parse
+                echecs.append({"index": i, "raison": f"parsing impossible: {exc}"})
+                continue
+            if norm["date"] is None:
+                echecs.append({"index": i, "raison": "date introuvable"})
+                continue
+            if not norm["sport"]:
+                echecs.append({"index": i, "raison": "sport introuvable"})
+                continue
+            if norm["activity_id"] is None:
+                echecs.append({
+                    "index": i,
+                    "date": norm["date"].isoformat(),
+                    "raison": "aucun identifiant Garmin : impossible de dedupliquer, "
+                              "l'activite serait dupliquee au prochain import",
+                })
+                continue
+            preparees.append((str(norm["activity_id"]), norm, activite))
+
+        deja = await repos.sessions.existing_garmin_ids([g for g, _, _ in preparees])
+        a_creer = [(g, n, a) for g, n, a in preparees if g not in deja]
+
+        sessions_creees = 0
+        if not dry_run:
+            for garmin_id, norm, activite in a_creer:
+                try:
+                    await repos.sessions.create(
+                        date=norm["date"],
+                        sport=norm["sport"],
+                        executed=_build_summary(norm) or None,
+                        garmin_activity_id=garmin_id,
+                        raw=activite,
+                    )
+                    sessions_creees += 1
+                    dates_vues.append(norm["date"])
+                except ValueError:
+                    # course perdue contre un import concurrent : l'index unique a
+                    # tranche, la ligne existe, c'est le resultat voulu.
+                    pass
+                except Exception as exc:
+                    echecs.append({
+                        "garmin_activity_id": garmin_id,
+                        "raison": f"ecriture impossible: {exc}",
+                    })
+        else:
+            dates_vues.extend(n["date"] for _, n, _ in a_creer)
+
+        # ---- bien-etre : meme principe, on ignore ce qui existe --------------
+        prepa_daily: list[tuple[dt.date, dict]] = []
+        for i, journee in enumerate(dailies):
+            brut = _normalize_daily(journee)
+            date_str = _pick(journee, "date", "calendarDate", "startTimeLocal")
+            jour = _parse_date(date_str) if date_str else None
+            if jour is None:
+                echecs.append({"index": i, "raison": "date de la journee introuvable "
+                                                    "(cherche: date, calendarDate)"})
+                continue
+            try:
+                valide = DailyMetricsUpdate.model_validate(brut)
+            except ValidationError as exc:
+                echecs.append({"date": jour.isoformat(),
+                               "raison": f"metriques invalides: {exc.error_count()} champ(s)"})
+                continue
+            champs = valide.model_dump(exclude_unset=True, exclude_none=True)
+            if champs:
+                prepa_daily.append((jour, champs))
+
+        dates_existantes = await repos.metrics.existing_dates([d for d, _ in prepa_daily])
+        a_upsert = [(d, c) for d, c in prepa_daily if d not in dates_existantes]
+
+        journees_creees = 0
+        if not dry_run:
+            for jour, champs in a_upsert:
+                try:
+                    await repos.metrics.upsert(jour, champs)
+                    journees_creees += 1
+                    dates_vues.append(jour)
+                except Exception as exc:
+                    echecs.append({"date": jour.isoformat(),
+                                   "raison": f"ecriture impossible: {exc}"})
+        else:
+            dates_vues.extend(d for d, _ in a_upsert)
+
+        logger.info(
+            "backfill garmin",
+            extra={"dry_run": dry_run, "activites_recues": len(activities),
+                   "sessions_creees": sessions_creees, "journees_creees": journees_creees,
+                   "echecs": len(echecs)},
+        )
+
+        return {
+            "dry_run": dry_run,
+            "activites": {
+                "recues": len(activities),
+                "deja_en_base": len(deja),
+                "creees" if not dry_run else "a_creer": sessions_creees if not dry_run else len(a_creer),
+            },
+            "journees_bien_etre": {
+                "recues": len(dailies),
+                "deja_en_base": len(dates_existantes),
+                "creees" if not dry_run else "a_creer": journees_creees if not dry_run else len(a_upsert),
+            },
+            "periode_couverte": {
+                "du": min(dates_vues).isoformat() if dates_vues else None,
+                "au": max(dates_vues).isoformat() if dates_vues else None,
+            },
+            "echecs": echecs[:_MAX_ECHECS_RAPPORTES],
+            "echecs_total": len(echecs),
+            "plan_non_touche": True,
         }

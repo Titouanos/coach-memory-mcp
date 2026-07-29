@@ -89,6 +89,9 @@ class Session(BaseModel):
     rpe: Optional[int] = None
     felt: Optional[str] = None
     garmin_activity_id: Optional[str] = None
+    # Payload Garmin brut, conserve depuis la migration 0007 : permet de
+    # recalculer splits, cadence et FC par lap sans reinterroger Garmin.
+    raw: Optional[dict] = None
     created_at: dt.datetime
 
 

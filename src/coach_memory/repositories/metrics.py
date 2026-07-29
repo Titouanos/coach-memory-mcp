@@ -19,6 +19,24 @@ _JSONB_FIELDS = {"raw"}
 
 
 class DailyMetricsRepository(BaseRepository):
+    async def existing_dates(self, dates: list[dt.date]) -> set[dt.date]:
+        """Sous-ensemble de `dates` deja present en base.
+
+        Sert a la reprise d'historique : `upsert` fait ON CONFLICT DO UPDATE,
+        donc reimporter une journee ECRASERAIT une valeur corrigee a la main.
+        Une reprise doit ignorer les journees deja connues, pas les reecrire —
+        Garmin n'est pas la source de verite d'une correction manuelle.
+        """
+        if not dates:
+            return set()
+        async with self.pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT date FROM coach.daily_metrics WHERE date = ANY(%s)",
+                (dates,),
+            )
+            rows = await cur.fetchall()
+        return {r["date"] for r in rows}
+
     async def upsert(self, date: dt.date, fields: dict) -> DailyMetrics:
         """Partial upsert keyed by date. `fields` keys are whitelisted upstream
         by DailyMetricsUpdate (extra='forbid'), so identifiers are trusted."""
