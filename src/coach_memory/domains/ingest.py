@@ -464,21 +464,31 @@ def register(mcp: FastMCP, repos: Repositories) -> None:
             if champs:
                 prepa_daily.append((jour, champs))
 
-        dates_existantes = await repos.metrics.existing_dates([d for d, _ in prepa_daily])
-        a_upsert = [(d, c) for d, c in prepa_daily if d not in dates_existantes]
-
+        # On ne SAUTE plus les journees connues, on REMPLIT LEURS TROUS.
+        # `fill_holes` fait `coalesce(existant, entrant)` : une valeur corrigee a
+        # la main reste intouchee, mais une colonne vide se remplit. C'etait un
+        # vrai defaut de la premiere version : les 16 journees en base n'avaient
+        # aucun ctl ni tsb, et « sauter ce qui existe » aurait rendu ces trous
+        # definitivement inaccessibles.
+        deja_renseignees = await repos.metrics.dates_with_content(
+            [d for d, _ in prepa_daily]
+        )
         journees_creees = 0
+        journees_completees = 0
         if not dry_run:
-            for jour, champs in a_upsert:
+            for jour, champs in prepa_daily:
                 try:
-                    await repos.metrics.upsert(jour, champs)
-                    journees_creees += 1
+                    _, insertion = await repos.metrics.fill_holes(jour, champs)
+                    if insertion:
+                        journees_creees += 1
+                    else:
+                        journees_completees += 1
                     dates_vues.append(jour)
                 except Exception as exc:
                     echecs.append({"date": jour.isoformat(),
                                    "raison": f"ecriture impossible: {exc}"})
         else:
-            dates_vues.extend(d for d, _ in a_upsert)
+            dates_vues.extend(d for d, _ in prepa_daily)
 
         logger.info(
             "backfill garmin",
@@ -496,8 +506,12 @@ def register(mcp: FastMCP, repos: Repositories) -> None:
             },
             "journees_bien_etre": {
                 "recues": len(dailies),
-                "deja_en_base": len(dates_existantes),
-                "creees" if not dry_run else "a_creer": journees_creees if not dry_run else len(a_upsert),
+                "deja_renseignees": len(deja_renseignees),
+                "creees": journees_creees,
+                # Journees deja presentes dont des colonnes vides ont ete
+                # remplies : une valeur existante n'est jamais ecrasee.
+                "completees": journees_completees,
+                "a_traiter" if dry_run else "_": len(prepa_daily) if dry_run else 0,
             },
             "periode_couverte": {
                 "du": min(dates_vues).isoformat() if dates_vues else None,

@@ -120,6 +120,52 @@ async def test_ingest_matches_planned_workout(client):
     assert res2["matched_workout"] is None
 
 
+async def test_ingest_ne_cloture_pas_un_workout_posterieur(client):
+    """Non-regression : une activite ne doit pas cloturer un entrainement
+    planifie APRES elle — il n'a pas encore ete couru.
+
+    La fenetre d'appariement allait de J-1 a J+1. Un run le 29/07 marquait donc
+    'done' le tempo prescrit le 30/07. Le degat est PERMANENT : `mark` ecrit
+    session_id = COALESCE(%s, session_id), donc un lien errone ne peut jamais
+    etre effac2. Fenetre resserree a [J-1, J] le 29/07/2026.
+    """
+    demain = TODAY + dt.timedelta(days=1)
+    futur = await client.call_tool(
+        "plan_workout",
+        {"date": demain.isoformat(), "sport": "run", "title": "Tempo de demain"},
+    )
+    wid = futur.data["id"]
+
+    # activite d'AUJOURD'HUI : elle ne doit pas toucher au workout de demain
+    res = (
+        await client.call_tool(
+            "ingest_garmin_activity", {"activity": ACTIVITY_CONNECT}
+        )
+    ).data
+    assert res["matched_workout"] is None, "un workout posterieur a ete apparie"
+
+    semaine = (await client.call_tool("get_week", {"date": demain.isoformat()})).data
+    tous = [w for j in semaine["days"] for w in j.get("workouts", [])]
+    w = next(x for x in tous if x["id"] == wid)
+    assert w["status"] == "planned", "un entrainement futur a ete cloture"
+    assert w["session_id"] is None
+
+    # controle en creux : le retard (prevu la veille, fait aujourd hui) marche
+    hier_w = await client.call_tool(
+        "plan_workout",
+        {"date": (TODAY - dt.timedelta(days=1)).isoformat(), "sport": "run",
+         "title": "Prevu hier, fait aujourd hui"},
+    )
+    res2 = (
+        await client.call_tool(
+            "ingest_garmin_activity",
+            {"activity": {**ACTIVITY_CONNECT, "activityId": 555000111}},
+        )
+    ).data
+    assert res2["matched_workout"] is not None
+    assert res2["matched_workout"]["id"] == hier_w.data["id"]
+
+
 async def test_ingest_exact_date_wins_over_adjacent(client):
     near = (
         await client.call_tool(

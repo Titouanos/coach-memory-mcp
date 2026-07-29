@@ -19,27 +19,53 @@ _JSONB_FIELDS = {"raw"}
 
 
 class DailyMetricsRepository(BaseRepository):
-    async def existing_dates(self, dates: list[dt.date]) -> set[dt.date]:
-        """Sous-ensemble de `dates` deja present en base.
+    async def dates_with_content(self, dates: list[dt.date]) -> set[dt.date]:
+        """Sous-ensemble de `dates` portant REELLEMENT une metrique.
 
-        Sert a la reprise d'historique : `upsert` fait ON CONFLICT DO UPDATE,
-        donc reimporter une journee ECRASERAIT une valeur corrigee a la main.
-        Une reprise doit ignorer les journees deja connues, pas les reecrire —
-        Garmin n'est pas la source de verite d'une correction manuelle.
+        Une ligne integralement NULL ne compte pas comme couverte : sinon une
+        sonde de couverture validerait sa propre pollution. Sert au rapport de
+        reprise, pas a decider d'ecrire — c'est `fill_holes` qui protege.
         """
         if not dates:
             return set()
         async with self.pool.connection() as conn:
             cur = await conn.execute(
-                "SELECT date FROM coach.daily_metrics WHERE date = ANY(%s)",
+                """
+                SELECT date FROM coach.daily_metrics
+                WHERE date = ANY(%s)
+                  AND (hrv_ms IS NOT NULL OR sleep_score IS NOT NULL
+                       OR resting_hr IS NOT NULL OR training_readiness IS NOT NULL
+                       OR ctl IS NOT NULL OR sleep_duration_min IS NOT NULL)
+                """,
                 (dates,),
             )
             rows = await cur.fetchall()
         return {r["date"] for r in rows}
 
-    async def upsert(self, date: dt.date, fields: dict) -> DailyMetrics:
-        """Partial upsert keyed by date. `fields` keys are whitelisted upstream
-        by DailyMetricsUpdate (extra='forbid'), so identifiers are trusted."""
+    async def _write(
+        self, date: dt.date, fields: dict, *, fill_holes: bool
+    ) -> tuple[DailyMetrics, bool]:
+        """Upsert partiel par date. `fields` est filtre en amont par
+        DailyMetricsUpdate (extra='forbid'), donc les identifiants sont surs.
+
+        Deux regimes, selon l'INTENTION de l'appelant :
+
+        `fill_holes=False` — `col = EXCLUDED.col`, l'entrant gagne. C'est ce que
+        veulent `upsert_daily_metrics` (une saisie explicite) et
+        `ingest_garmin_activity` sur la journee courante, ou la lecture la plus
+        recente EST la meilleure valeur.
+
+        `fill_holes=True` — `col = coalesce(existant, entrant)`, l'existant
+        gagne. C'est le regime d'une REPRISE d'historique. Deux benefices :
+        une valeur corrigee a la main ne peut pas etre ecrasee par un blob
+        retrospectif, ET une seconde passe COMPLETE la ligne au lieu de la
+        sauter. Ce dernier point est decisif : les 16 journees en base n'avaient
+        aucun ctl ni tsb — une logique « on saute ce qui existe » aurait rendu
+        ces trous definitivement inaccessibles.
+
+        Renvoie (ligne, insertion) — `xmax = 0` distingue une insertion d'une
+        mise a jour, ce qui permet de compter honnetement dans le rapport.
+        """
         if not fields:
             raise ValueError("no fields provided to upsert")
 
@@ -49,27 +75,53 @@ class DailyMetricsRepository(BaseRepository):
             for c in columns
         ]
         ident = [sql.Identifier(c) for c in columns]
+
+        def affectation(col: str) -> sql.Composable:
+            c = sql.Identifier(col)
+            if not fill_holes:
+                return sql.SQL("{c} = EXCLUDED.{c}").format(c=c)
+            if col == "raw":
+                # Fusion des blobs plutot qu'ecrasement : les deux sources
+                # peuvent porter des cles differentes (charge d'un cote,
+                # sommeil de l'autre). L'existant gagne cle par cle.
+                return sql.SQL(
+                    "raw = CASE "
+                    "WHEN EXCLUDED.raw IS NULL THEN coach.daily_metrics.raw "
+                    "WHEN coach.daily_metrics.raw IS NULL THEN EXCLUDED.raw "
+                    "ELSE EXCLUDED.raw || coach.daily_metrics.raw END"
+                )
+            return sql.SQL(
+                "{c} = coalesce(coach.daily_metrics.{c}, EXCLUDED.{c})"
+            ).format(c=c)
+
         query = sql.SQL(
             """
             INSERT INTO coach.daily_metrics (date, {cols})
             VALUES ({date_ph}, {ph})
             ON CONFLICT (date) DO UPDATE SET {assignments}
-            RETURNING {ret}
+            RETURNING {ret}, (xmax = 0) AS insertion
             """
         ).format(
             cols=sql.SQL(", ").join(ident),
             date_ph=sql.Placeholder(),
             ph=sql.SQL(", ").join(sql.Placeholder() for _ in columns),
-            assignments=sql.SQL(", ").join(
-                sql.SQL("{c} = EXCLUDED.{c}").format(c=i) for i in ident
-            ),
+            assignments=sql.SQL(", ").join(affectation(c) for c in columns),
             ret=_COLS,
         )
         async with self.pool.connection() as conn:
             cur = await conn.execute(query, [date, *values])
             row = await cur.fetchone()
         assert row is not None
-        return DailyMetrics(**row)
+        return DailyMetrics(**row), bool(row["insertion"])
+
+    async def upsert(self, date: dt.date, fields: dict) -> DailyMetrics:
+        """Ecrasement : l'entrant gagne. Comportement historique, inchange."""
+        row, _ = await self._write(date, fields, fill_holes=False)
+        return row
+
+    async def fill_holes(self, date: dt.date, fields: dict) -> tuple[DailyMetrics, bool]:
+        """Reprise : ne remplit que les trous. Renvoie (ligne, insertion)."""
+        return await self._write(date, fields, fill_holes=True)
 
     async def range(self, start: dt.date, end: dt.date) -> list[DailyMetrics]:
         query = sql.SQL(

@@ -72,34 +72,51 @@ async def test_backfill_ne_touche_pas_le_plan(client):
     assert unit["matched_workout"]["status"] == "done"
 
 
-async def test_backfill_nefface_pas_une_metrique_corrigee(client):
-    """Une journee deja en base est ignoree, jamais reecrite.
+async def test_backfill_preserve_le_manuel_et_remplit_les_trous(client):
+    """Deux proprietes en un test, et elles sont indissociables.
 
-    daily_metrics est un upsert par date : sans garde-fou, un import ecraserait
-    une valeur corrigee a la main par la valeur brute de Garmin. Or une
-    correction manuelle vaut mieux que la donnee du capteur.
+    daily_metrics est un upsert par date. Un import naif ecraserait une valeur
+    corrigee a la main par la mesure brute du capteur. Mais « sauter la journee
+    si elle existe » est tout aussi faux : les 16 journees en production
+    n'avaient AUCUN ctl ni tsb, et sauter les aurait rendus definitivement
+    inaccessibles.
+
+    Le regime coalesce(existant, entrant) resout les deux : l'existant gagne,
+    le vide se remplit.
     """
+    # journee partiellement renseignee a la main : HRV pose, sommeil absent
     await client.call_tool(
         "upsert_daily_metrics",
-        {"date": HIER.isoformat(), "fields": {"hrv_ms": 99, "hrv_status": "CORRIGE_MAIN"}},
+        {"date": HIER.isoformat(),
+         "fields": {"hrv_ms": 99, "hrv_status": "CORRIGE_MAIN"}},
     )
 
     res = (
         await client.call_tool(
             "backfill_garmin_history",
-            {"dailies": [{"date": HIER.isoformat(), "lastNightAvg": 42,
-                          "hrvStatus": "GARMIN"}]},
+            {"dailies": [{
+                "date": HIER.isoformat(),
+                "lastNightAvg": 42,          # doit etre IGNORE : hrv_ms deja pose
+                "hrvStatus": "GARMIN",       # doit etre IGNORE
+                "sleepScore": 86,            # doit REMPLIR le trou
+                "restingHeartRate": 45,      # doit REMPLIR le trou
+            }]},
         )
     ).data
 
-    assert res["journees_bien_etre"]["deja_en_base"] == 1
+    assert res["journees_bien_etre"]["deja_renseignees"] == 1
     assert res["journees_bien_etre"]["creees"] == 0
+    assert res["journees_bien_etre"]["completees"] == 1
 
     m = (await client.call_tool("get_daily_metrics",
                                 {"start_date": HIER.isoformat(),
-                                 "end_date": HIER.isoformat()})).data
-    assert m[0]["hrv_ms"] == 99, "l'import a ecrase une valeur corrigee a la main"
-    assert m[0]["hrv_status"] == "CORRIGE_MAIN"
+                                 "end_date": HIER.isoformat()})).data[0]
+    # ce qui etait pose a la main survit
+    assert m["hrv_ms"] == 99, "une valeur corrigee a la main a ete ecrasee"
+    assert m["hrv_status"] == "CORRIGE_MAIN"
+    # ce qui etait vide est desormais rempli
+    assert m["sleep_score"] == 86, "un trou n'a pas ete rempli"
+    assert m["resting_hr"] == 45, "un trou n'a pas ete rempli"
 
 
 async def test_backfill_est_idempotent(client):

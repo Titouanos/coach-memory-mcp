@@ -121,15 +121,31 @@ class TrainingPlanRepository(BaseRepository):
     async def find_planned_match(
         self, *, date: dt.date, sport: str
     ) -> PlannedWorkout | None:
-        """Closest 'planned' workout of the same sport within ±1 day (exact date
-        wins, then earlier id). Used by ingest to pair prévu↔réalisé."""
+        """Workout 'planned' du même sport le plus proche, fenêtre [J-1, J]
+        (date exacte gagnante, puis id le plus petit). Sert à apparier
+        prévu ↔ réalisé lors de l'ingestion.
+
+        FENÊTRE RESSERRÉE le 29/07/2026. Elle allait jusqu'à J+1, ce qui laissait
+        une activité marquer 'done' un entraînement planifié APRÈS elle — donc
+        pas encore couru. Cas réel encouru : un run le 29/07 clôturait le tempo
+        prescrit le 30/07.
+
+        L'asymétrie des coûts tranche le compromis. `mark` écrit
+        `session_id = COALESCE(%s, session_id)` : un lien erroné ne peut donc
+        JAMAIS être effacé, un faux positif est un dégât permanent. À l'inverse
+        un faux négatif se rattrape d'un `mark_workout` à la main.
+
+        Ce qui reste couvert : prévu J, réalisé J+1 — le retard, le cas fréquent.
+        Ce qui est sacrifié : prévu J+1, réalisé J — l'avance, précisément le
+        vecteur de clôture prématurée.
+        """
         async with self.pool.connection() as conn:
             cur = await conn.execute(
                 f"""
                 SELECT {_COLS} FROM coach.training_plan
                 WHERE status = 'planned'
                   AND lower(sport) = lower(%(sport)s)
-                  AND date BETWEEN %(d)s::date - 1 AND %(d)s::date + 1
+                  AND date BETWEEN %(d)s::date - 1 AND %(d)s::date
                 ORDER BY abs(date - %(d)s::date), id
                 LIMIT 1
                 """,
