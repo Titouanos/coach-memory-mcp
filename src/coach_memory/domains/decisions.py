@@ -52,3 +52,27 @@ def register(mcp: FastMCP, repos: Repositories) -> None:
         """
         decisions = await repos.decisions.active()
         return [d.model_dump(mode="json") for d in decisions]
+
+    @mcp.tool
+    async def retire_decision(decision_id: int) -> dict:
+        """Retire a decision that has simply run its course — WITHOUT replacing it.
+
+        Complement de supersedes_id (qui remplace) : un verdict quotidien
+        perime, un cadrage de semaine revolue n'appellent aucune decision de
+        substitution. Sans retrait, ils s'accumulent dans le digest et le
+        coach relit du bruit a chaque session.
+
+        La decision reste en base (historique complet) ; elle disparait
+        seulement de get_active_decisions et du digest. Retirer une decision
+        deja inactive est une erreur, pas un no-op : si l'id vise est deja
+        eteint, c'est probablement le mauvais id.
+
+        NE PAS retirer : le mandat de coaching, les cadrages de bloc en cours,
+        les regles permanentes — tout ce qui guide encore les decisions
+        futures reste actif.
+        """
+        try:
+            decision = await repos.decisions.retire(decision_id)
+        except (LookupError, ValueError) as exc:
+            raise ToolError(str(exc)) from exc
+        return decision.model_dump(mode="json")

@@ -222,6 +222,26 @@ class PlannedWorkoutUpdate(BaseModel):
     goal_id: Optional[int] = None
 
 
+class SessionUpdate(BaseModel):
+    """Partial session edit — le cas d'usage est d'ajouter le RPE et le ressenti
+    APRES coup, une fois la seance deja ingeree depuis Garmin, sans reecrire le
+    reste de la ligne.
+
+    Volontairement exclus : date, sport, garmin_activity_id et raw. Les deux
+    premiers identifient la seance (les changer, c'est en decrire une autre) ;
+    garmin_activity_id est la cle de deduplication des imports — la modifier a
+    la main ouvrirait la porte aux doublons silencieux ; raw est le payload
+    capteur, il n'existe pas de version « corrigee a la main » d'un blob brut.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    type: Optional[str] = None
+    planned: Optional[str] = None
+    executed: Optional[str] = None
+    rpe: Optional[Rpe] = None
+    felt: Optional[str] = None
+
+
 class GoalUpdate(BaseModel):
     """Partial goal edit. Only fields explicitly set (and non-null) are written.
 
