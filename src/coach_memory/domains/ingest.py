@@ -92,6 +92,26 @@ def _fmt_pace_min_km(speed_ms: float) -> str:
 
 
 def _normalize_activity(activity: dict) -> dict:
+    """Ramene un payload d'activite a une forme stable, quelle que soit sa source.
+
+    DEUX CONVENTIONS DE NOMMAGE coexistent et doivent toutes deux fonctionner :
+
+    * l'API Garmin brute (via la bibliotheque `garminconnect`), en camelCase :
+      `activityId`, `startTimeLocal`, `duration`, `averageHR`...
+    * le serveur MCP Garmin, qui RETRAITE ses sorties en snake_case :
+      `id`, `start_time_local`, `duration_seconds`, `avg_hr_bpm`...
+
+    Les alias snake_case ont ete ajoutes le 2026-08-01 apres constat en
+    conditions reelles : sur 185 activites d'un historique de 52 semaines,
+    AUCUNE n'etait importable. `id` et `start_time_local` ne figuraient dans
+    aucune liste d'alias, donc chaque element echouait des la verification
+    d'identifiant (« aucun identifiant Garmin : impossible de dedupliquer »).
+    Le defaut etait reste invisible parce que l'ingestion quotidienne passait
+    par des dictionnaires assembles a la main, jamais par la sortie du MCP.
+
+    Le camelCase reste PRIORITAIRE dans chaque liste : quand les deux formes
+    sont presentes, la source brute gagne, car elle est plus complete.
+    """
     type_node = _pick(activity, "activityType", "activityTypeDTO.typeKey", "type")
     type_key = (
         type_node.get("typeKey") if isinstance(type_node, dict) else type_node
@@ -99,24 +119,32 @@ def _normalize_activity(activity: dict) -> dict:
     type_key = str(type_key).lower() if type_key else None
 
     return {
-        "activity_id": _pick(activity, "activityId", "activity_id", "activityUuid"),
+        "activity_id": _pick(activity, "activityId", "activity_id", "activityUuid", "id"),
         "name": _pick(activity, "activityName", "name", "title"),
         "date": _parse_date(
-            _pick(activity, "startTimeLocal", "startTimeGMT", "startTimeGmt",
+            _pick(activity, "startTimeLocal", "start_time_local", "start_time",
+                  "startTimeGMT", "startTimeGmt", "start_time_gmt",
                   "beginTimestamp", "date")
         ),
         "type_key": type_key,
         "sport": _SPORT_MAP.get(type_key, type_key) if type_key else None,
         "duration_s": _as_float(_pick(activity, "duration", "movingDuration",
-                                      "elapsedDuration")),
-        "distance_m": _as_float(_pick(activity, "distance", "distanceInMeters")),
+                                      "elapsedDuration", "duration_seconds",
+                                      "moving_duration_seconds",
+                                      "elapsed_duration_seconds")),
+        "distance_m": _as_float(_pick(activity, "distance", "distanceInMeters",
+                                      "distance_meters")),
         "avg_hr": _as_int(_pick(activity, "averageHR", "avgHr", "averageHeartRate",
-                                "avgHeartRate")),
-        "max_hr": _as_int(_pick(activity, "maxHR", "maxHr", "maxHeartRate")),
-        "avg_speed_ms": _as_float(_pick(activity, "averageSpeed", "avgSpeed")),
-        "load": _as_float(_pick(activity, "activityTrainingLoad", "trainingLoad")),
+                                "avgHeartRate", "avg_hr_bpm")),
+        "max_hr": _as_int(_pick(activity, "maxHR", "maxHr", "maxHeartRate",
+                                "max_hr_bpm")),
+        "avg_speed_ms": _as_float(_pick(activity, "averageSpeed", "avgSpeed",
+                                        "avg_speed_mps")),
+        "load": _as_float(_pick(activity, "activityTrainingLoad", "trainingLoad",
+                                "training_load")),
         "calories": _as_int(_pick(activity, "calories", "activeKilocalories")),
-        "avg_power": _as_int(_pick(activity, "avgPower", "averagePower")),
+        "avg_power": _as_int(_pick(activity, "avgPower", "averagePower",
+                                   "avg_power_w")),
     }
 
 
@@ -190,34 +218,61 @@ def _normalize_daily(daily: dict) -> dict:
     # ici faisait perdre la seance d'entrainement pour un ctl negatif envoye par
     # Garmin. Un appel EXPLICITE a upsert_daily_metrics, lui, continue de
     # rejeter une valeur aberrante : c'est une intention, pas un artefact.
+    # Comme pour les activites, deux conventions coexistent : l'API brute en
+    # camelCase et le serveur MCP en snake_case. Les alias snake_case ci-dessous
+    # ont ete releves le 2026-08-01 sur les sorties REELLES des endpoints
+    # (get_hrv_data, get_sleep_summary, get_training_readiness,
+    # get_training_status), pas devinees par symetrie.
     candidates = {
         "hrv_ms": _gauge(_pick(daily, "hrv_ms", "lastNightAvg", "avgOvernightHrv",
-                               "hrvSummary.lastNightAvg"), hi=500),
+                               "hrvSummary.lastNightAvg",
+                               "last_night_avg_hrv_ms", "avg_overnight_hrv"), hi=500),
         "hrv_status": _pick(daily, "hrv_status", "hrvStatus", "hrvSummary.status"),
         "sleep_score": _gauge(_pick(daily, "sleep_score", "sleepScore",
                                     "overallSleepScore", "sleepScores.overall.value"), hi=100),
         "sleep_duration_min": _gauge(_pick(daily, "sleep_duration_min", "sleepTimeMinutes"),
                                      hi=1440),
-        "resting_hr": _gauge(_pick(daily, "resting_hr", "restingHeartRate", "restingHR"),
-                             hi=250),
-        "body_battery_start": _gauge(_pick(daily, "body_battery_start", "bodyBatteryAtWake"),
-                                     hi=100),
-        "body_battery_end": _gauge(_pick(daily, "body_battery_end", "bodyBatteryMostRecent"),
-                                   hi=100),
+        "resting_hr": _gauge(_pick(daily, "resting_hr", "restingHeartRate", "restingHR",
+                                   "resting_heart_rate"), hi=250),
+        "body_battery_start": _gauge(_pick(daily, "body_battery_start", "bodyBatteryAtWake",
+                                           "body_battery_at_wake"), hi=100),
+        "body_battery_end": _gauge(_pick(daily, "body_battery_end", "bodyBatteryMostRecent",
+                                         "body_battery_most_recent"), hi=100),
+        # "score" en dernier recours : c'est la cle du bloc renvoye par
+        # get_training_readiness, dont le score de sommeil porte deja un nom
+        # distinct (sleep_score) — pas de collision observee.
         "training_readiness": _gauge(_pick(daily, "training_readiness",
-                                           "trainingReadiness", "trainingReadiness.score"),
+                                           "trainingReadiness", "trainingReadiness.score",
+                                           "readiness_score", "score"),
                                      hi=100),
         # Charges : 0 compte, et tsb est legitimement negatif — on borne la
         # plage sans filtrer le signe.
-        "ctl": _in_range(_pick(daily, "ctl"), 0, 1000),
-        "atl": _in_range(_pick(daily, "atl"), 0, 1000),
+        # chronic_load / acute_load sont les noms Garmin de ce que le monde de
+        # l'endurance appelle CTL / ATL (get_training_status). Sans ces alias,
+        # les trois colonnes restaient vides : c'etait le cas des 16 premieres
+        # journees en base, toutes sans ctl ni atl ni tsb.
+        "ctl": _in_range(_pick(daily, "ctl", "chronic_load", "chronicLoad"), 0, 1000),
+        "atl": _in_range(_pick(daily, "atl", "acute_load", "acuteLoad"), 0, 1000),
         "tsb": _in_range(_pick(daily, "tsb"), -1000, 1000),
-        "vo2max_run": _gauge_f(_pick(daily, "vo2max_run", "vo2MaxValue"), hi=100),
-        "vo2max_bike": _gauge_f(_pick(daily, "vo2max_bike", "vo2MaxCyclingValue"), hi=100),
+        "vo2max_run": _gauge_f(_pick(daily, "vo2max_run", "vo2MaxValue",
+                                     "vo2_max_precise", "vo2_max"), hi=100),
+        "vo2max_bike": _gauge_f(_pick(daily, "vo2max_bike", "vo2MaxCyclingValue",
+                                      "cycling_vo2_max_precise", "cycling_vo2_max"), hi=100),
     }
-    sleep_seconds = _gauge(_pick(daily, "sleepTimeSeconds"), hi=1440 * 60)
+    sleep_seconds = _gauge(_pick(daily, "sleepTimeSeconds", "sleep_seconds"), hi=1440 * 60)
     if candidates["sleep_duration_min"] is None and sleep_seconds is not None:
         candidates["sleep_duration_min"] = sleep_seconds // 60
+    # tsb n'est expose par AUCUN endpoint Garmin : on le derive de sa definition
+    # standard (TSB = CTL - ATL) quand les deux charges sont connues et que
+    # l'appelant ne l'a pas fourni lui-meme. Une valeur explicite reste toujours
+    # prioritaire. Sans cette derivation la colonne resterait vide indefiniment,
+    # alors que c'est l'indicateur de fraicheur le plus lu.
+    if (
+        candidates["tsb"] is None
+        and candidates["ctl"] is not None
+        and candidates["atl"] is not None
+    ):
+        candidates["tsb"] = _in_range(candidates["ctl"] - candidates["atl"], -1000, 1000)
     normalized = {k: v for k, v in candidates.items() if v is not None}
     normalized["raw"] = daily
     return normalized
