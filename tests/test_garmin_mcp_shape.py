@@ -64,6 +64,49 @@ def activite_mcp_liste(jour: dt.date, aid: int = 23803309645) -> dict:
     }
 
 
+# Capture de get_activity(23776839448) — sortie velo. La puissance porte un nom
+# encore different (`avg_power_watts`) : chaque famille de sport ajoute ses
+# propres champs, d'ou l'interet de tester au moins deux sports.
+def activite_mcp_velo(jour: dt.date, aid: int = 23776839448) -> dict:
+    return {
+        "id": aid,
+        "name": "Saint-Vincent-sur-Graon Road Cycling",
+        "type": "road_biking",
+        "start_time_local": f"{jour.isoformat()}T14:44:59.0",
+        "duration_seconds": 5175.639,
+        "distance_meters": 41111.4,
+        "avg_speed_mps": 7.942999839782715,
+        "avg_hr_bpm": 140.0,
+        "max_hr_bpm": 165.0,
+        "calories": 880.0,
+        "avg_power_watts": 147.0,
+        "normalized_power_watts": 178.0,
+        "training_load": 93.46400451660156,
+    }
+
+
+async def test_activite_velo_au_format_mcp(client):
+    """Le velo doit etre reconnu comme tel, et sa puissance conservee."""
+    jour = J + dt.timedelta(days=5)
+    res = (
+        await client.call_tool(
+            "backfill_garmin_history", {"activities": [activite_mcp_velo(jour)]}
+        )
+    ).data
+    assert res["activites"]["creees"] == 1, f"activite rejetee : {res.get('echecs')}"
+
+    s = next(
+        x for x in (await client.call_tool("get_recent_sessions", {"limit": 50})).data
+        if x["garmin_activity_id"] == "23776839448"
+    )
+    assert s["sport"] == "bike", "road_biking doit etre mappe sur bike"
+    assert "147 W" in s["executed"], (
+        f"puissance moyenne absente du resume : {s['executed']}"
+    )
+    # Une allure min/km n'a pas de sens a velo : on attend une vitesse km/h.
+    assert "km/h" in s["executed"], s["executed"]
+
+
 async def test_activite_au_format_mcp_est_importee(client):
     """Le scenario exact qui a echoue sur les 185 activites."""
     res = (
@@ -77,7 +120,9 @@ async def test_activite_au_format_mcp_est_importee(client):
     )
 
     s = next(
-        x for x in (await client.call_tool("get_recent_sessions", {"limit": 50})).data
+        x for x in (await client.call_tool(
+            "get_recent_sessions", {"limit": 50, "include_raw": True}
+        )).data
         if x["garmin_activity_id"] == "23748518553"
     )
     assert s["date"] == J.isoformat(), "date mal extraite de start_time_local"
@@ -217,6 +262,52 @@ async def test_un_tsb_explicite_prime_sur_la_derivation(client):
         )
     ).data[0]
     assert m["tsb"] == -10, "une valeur explicite a ete ecrasee par le calcul"
+
+
+async def test_le_digest_nembarque_pas_les_blobs_bruts(client):
+    """Consequence directe de l'import : le digest doit rester un digest.
+
+    Le 2026-08-01, apres l'import des 52 semaines, `raw` est devenu non nul sur
+    la totalite des seances. get_athlete_context embarquant les 10 dernieres,
+    le digest est passe a 101 000 caracteres — dont 56 % de blobs — et a
+    DEPASSE LA LIMITE DE JETONS. C'est le tout premier outil qu'appelle une
+    session de coaching : le rendre irrecuperable equivaut a casser l'outil.
+    """
+    jour = dt.date.today() - dt.timedelta(days=1)
+    gros = activite_mcp(jour, aid=555444)
+    # Un blob realiste : ~5 Ko, comme une activite Garmin complete.
+    gros["splits"] = [{"lap": i, "hr": 150 + i, "pace": 300 + i} for i in range(120)]
+    await client.call_tool("backfill_garmin_history", {"activities": [gros]})
+
+    ctx = (await client.call_tool("get_athlete_context", {})).data
+    seances = ctx["recent_sessions"]
+    assert seances, "le digest devrait contenir la seance importee"
+    assert all("raw" not in s for s in seances), (
+        "le digest embarque les blobs bruts : il grossira sans limite"
+    )
+    # Le resume texte, lui, doit rester present : c'est ce qui porte le sens.
+    assert any(s.get("executed") for s in seances)
+
+
+async def test_les_blobs_restent_accessibles_a_la_demande(client):
+    """Exclure par defaut ne doit pas rendre la donnee inatteignable."""
+    jour = dt.date.today() - dt.timedelta(days=2)
+    await client.call_tool(
+        "backfill_garmin_history", {"activities": [activite_mcp(jour, aid=555555)]}
+    )
+
+    sans = (await client.call_tool("get_recent_sessions", {"limit": 5})).data
+    assert all("raw" not in s for s in sans), "raw doit etre exclu par defaut"
+
+    avec = (
+        await client.call_tool(
+            "get_recent_sessions", {"limit": 5, "include_raw": True}
+        )
+    ).data
+    cible = next(s for s in avec if s["garmin_activity_id"] == "555555")
+    assert cible["raw"]["avg_cadence"] == 156.734375, (
+        "include_raw=True doit rendre le blob complet"
+    )
 
 
 async def test_ingestion_unitaire_accepte_aussi_le_format_mcp(client):

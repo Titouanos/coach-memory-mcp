@@ -79,7 +79,16 @@ def register(mcp: FastMCP, repos: Repositories) -> None:
                 for w in week_plan
             ],
             "daily_metrics_7d": metrics_7d,
-            "recent_sessions": [s.model_dump(mode="json") for s in recent_sessions],
+            # `raw` est EXCLU du digest, sans option pour l'inclure. Ce blob pese
+            # environ 5 Ko par seance : le 2026-08-01, apres l'import des 52
+            # semaines, il representait 56 % du digest (56 000 caracteres sur
+            # 101 000) et faisait DEPASSER LA LIMITE DE JETONS de l'appel — donc
+            # planter le tout premier outil qu'appelle une session de coaching.
+            # Un digest doit rester un digest ; le detail se demande a la piece
+            # via get_recent_sessions(include_raw=True).
+            "recent_sessions": [
+                s.model_dump(mode="json", exclude={"raw"}) for s in recent_sessions
+            ],
             "active_decisions": [d.model_dump(mode="json") for d in active_decisions],
             "recent_analyses": [a.model_dump(mode="json") for a in recent_analyses],
         }
