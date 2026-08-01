@@ -48,8 +48,22 @@ def register(mcp: FastMCP, repos: Repositories) -> None:
         return session.model_dump(mode="json")
 
     @mcp.tool
-    async def get_recent_sessions(limit: int = 10) -> list[dict]:
-        """Return the most recent sessions (newest first). Default 10."""
+    async def get_recent_sessions(
+        limit: int = 10, include_raw: bool = False
+    ) -> list[dict]:
+        """Return the most recent sessions (newest first). Default 10.
+
+        `include_raw` attache le payload Garmin brut de chaque seance : splits,
+        cadence et FC par lap. A n'activer QUE sur un petit nombre de seances
+        precises, jamais pour balayer un historique.
+
+        Le blob pese environ 5 Ko par seance : a la limite de 200, l'activer
+        represente ~1 Mo, bien au-dela de ce qu'un appel d'outil peut rendre.
+        Il est donc exclu par defaut depuis le 2026-08-01, apres l'import de 52
+        semaines qui a rendu ce champ non nul sur la totalite des seances — et
+        qui, du meme coup, faisait depasser la limite de jetons au premier appel.
+        """
         limit = max(1, min(limit, 200))
         sessions = await repos.sessions.recent(limit)
-        return [s.model_dump(mode="json") for s in sessions]
+        exclure = set() if include_raw else {"raw"}
+        return [s.model_dump(mode="json", exclude=exclure) for s in sessions]

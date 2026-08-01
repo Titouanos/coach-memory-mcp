@@ -172,7 +172,14 @@ async def test_backfill_conserve_le_payload_brut(client):
     a = activite(5001, VIEUX, laps=[{"lapIndex": 1, "averageHR": 160, "distance": 1000}])
     await client.call_tool("backfill_garmin_history", {"activities": [a]})
 
-    sessions = (await client.call_tool("get_recent_sessions", {"limit": 50})).data
+    # include_raw explicite : le blob est exclu par defaut depuis le 2026-08-01,
+    # sinon un balayage d'historique renverrait ~1 Mo. Voir
+    # test_le_digest_nembarque_pas_les_blobs_bruts pour le detail.
+    sessions = (
+        await client.call_tool(
+            "get_recent_sessions", {"limit": 50, "include_raw": True}
+        )
+    ).data
     s = next(x for x in sessions if x["garmin_activity_id"] == "5001")
     assert s["raw"] is not None, "le payload brut n'a pas ete conserve"
     assert s["raw"]["laps"][0]["averageHR"] == 160
