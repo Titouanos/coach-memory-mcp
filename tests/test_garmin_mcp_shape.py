@@ -64,6 +64,49 @@ def activite_mcp_liste(jour: dt.date, aid: int = 23803309645) -> dict:
     }
 
 
+# Capture de get_activity(23776839448) — sortie velo. La puissance porte un nom
+# encore different (`avg_power_watts`) : chaque famille de sport ajoute ses
+# propres champs, d'ou l'interet de tester au moins deux sports.
+def activite_mcp_velo(jour: dt.date, aid: int = 23776839448) -> dict:
+    return {
+        "id": aid,
+        "name": "Saint-Vincent-sur-Graon Road Cycling",
+        "type": "road_biking",
+        "start_time_local": f"{jour.isoformat()}T14:44:59.0",
+        "duration_seconds": 5175.639,
+        "distance_meters": 41111.4,
+        "avg_speed_mps": 7.942999839782715,
+        "avg_hr_bpm": 140.0,
+        "max_hr_bpm": 165.0,
+        "calories": 880.0,
+        "avg_power_watts": 147.0,
+        "normalized_power_watts": 178.0,
+        "training_load": 93.46400451660156,
+    }
+
+
+async def test_activite_velo_au_format_mcp(client):
+    """Le velo doit etre reconnu comme tel, et sa puissance conservee."""
+    jour = J + dt.timedelta(days=5)
+    res = (
+        await client.call_tool(
+            "backfill_garmin_history", {"activities": [activite_mcp_velo(jour)]}
+        )
+    ).data
+    assert res["activites"]["creees"] == 1, f"activite rejetee : {res.get('echecs')}"
+
+    s = next(
+        x for x in (await client.call_tool("get_recent_sessions", {"limit": 50})).data
+        if x["garmin_activity_id"] == "23776839448"
+    )
+    assert s["sport"] == "bike", "road_biking doit etre mappe sur bike"
+    assert "147 W" in s["executed"], (
+        f"puissance moyenne absente du resume : {s['executed']}"
+    )
+    # Une allure min/km n'a pas de sens a velo : on attend une vitesse km/h.
+    assert "km/h" in s["executed"], s["executed"]
+
+
 async def test_activite_au_format_mcp_est_importee(client):
     """Le scenario exact qui a echoue sur les 185 activites."""
     res = (

@@ -144,7 +144,7 @@ def _normalize_activity(activity: dict) -> dict:
                                 "training_load")),
         "calories": _as_int(_pick(activity, "calories", "activeKilocalories")),
         "avg_power": _as_int(_pick(activity, "avgPower", "averagePower",
-                                   "avg_power_w")),
+                                   "avg_power_watts")),
     }
 
 
