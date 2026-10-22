@@ -10,7 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
     MIGRATIONS_DIR=/app/migrations
 
 # uv drives the pyproject-based install.
-RUN pip install --no-cache-dir uv
+RUN pip install --no-cache-dir --upgrade pip uv
 
 WORKDIR /app
 

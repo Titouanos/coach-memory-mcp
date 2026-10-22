@@ -6,6 +6,8 @@ repository + SQL), against the real database.
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 from fastmcp.exceptions import ToolError
 
@@ -114,14 +116,18 @@ async def test_context_includes_priority_c_races(client):
     erreur de planification le 29/07/2026 (5 km de Vannes en C, oublie dans le
     bloc Londres). Une course annulee, elle, doit rester exclue.
     """
+    # Dates relatives : figees, elles finissaient par passer et sortir des courses « a venir ».
+    def dans(jours: int) -> str:
+        return (dt.date.today() + dt.timedelta(days=jours)).isoformat()
+
     await client.call_tool(
-        "add_race", {"name": "A-race", "date": "2026-11-29", "priority": "A"}
+        "add_race", {"name": "A-race", "date": dans(60), "priority": "A"}
     )
     await client.call_tool(
-        "add_race", {"name": "Course C oubliable", "date": "2026-09-12", "priority": "C"}
+        "add_race", {"name": "Course C oubliable", "date": dans(20), "priority": "C"}
     )
     annulee = await client.call_tool(
-        "add_race", {"name": "Course annulee", "date": "2026-10-01", "priority": "B"}
+        "add_race", {"name": "Course annulee", "date": dans(30), "priority": "B"}
     )
     await client.call_tool(
         "update_race_status", {"race_id": annulee.data["id"], "status": "cancelled"}
